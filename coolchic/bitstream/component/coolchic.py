@@ -149,6 +149,18 @@ def encode_decode_coolchic(
 
         time_ifce += time.time() - start_time_ifce
 
+        # Build ERP geodesic context index for this latent resolution (if requested)
+        erp_ctx_i = None
+        if param.flag_erp_context:
+            from coolchic.component.core.erp_geometry import build_erp_context_index
+            erp_ctx_i = build_erp_context_index(
+                h_i, w_i,
+                param.spatial_context_arm,
+                param.erp_vertical_radius,
+                param.erp_angular_radius_deg,
+                param.erp_max_horizontal,
+            )
+
         latent_i = entropy_coding_latent_arm(
             enc_quantized_latent[idx_latent].to(FIXED_POINT_DTYPE) if mode == "encode" else None,
             context_inter_feature,
@@ -160,6 +172,7 @@ def encode_decode_coolchic(
             range_coder,
             mode=mode,
             n_spatial_context=param.spatial_context_arm,
+            erp_ctx_index=erp_ctx_i,
         )
 
         # Insert at the beginning so that coded_latent[0] is the biggest latent

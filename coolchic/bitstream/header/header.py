@@ -254,6 +254,12 @@ class CoolChicHeader(AbstractHeader):
             HeaderElement(name="spatial_context_arm", n_bits=6),
             HeaderElement(name="linear_stabiliser_arm", n_bits=1),
             HeaderElement(name="n_hidden_layers_arm", n_bits=3),
+            # ERP geodesic context parameters (flag + 3 hyper-params)
+            # angular_radius is stored as round(deg * 10) to avoid floats; max ~12.7 deg with 7 bits.
+            HeaderElement(name="flag_erp_context", n_bits=1),
+            HeaderElement(name="erp_vertical_radius", n_bits=4),          # max 15 rows
+            HeaderElement(name="erp_angular_radius_deg_x10", n_bits=7),   # max 127 -> 12.7 deg
+            HeaderElement(name="erp_max_horizontal", n_bits=6),            # max 63 pixels
             # ---- Latent grid and hyperlatent grids
             HeaderElementList(name="img_size", n_bits_per_val=14, n_val=2),
             HeaderElementList(name="latent_resolution", n_bits_per_val=4, n_val=2),
@@ -324,6 +330,13 @@ class CoolChicHeader(AbstractHeader):
         self.set_value("spatial_context_arm", cc_enc_param.spatial_context_arm)
         self.set_value("linear_stabiliser_arm", cc_enc_param.linear_stabiliser_arm)
         self.set_value("n_hidden_layers_arm", cc_enc_param.n_hidden_layers_arm)
+        self.set_value("flag_erp_context", int(cc_enc_param.flag_erp_context))
+        self.set_value("erp_vertical_radius", cc_enc_param.erp_vertical_radius)
+        self.set_value(
+            "erp_angular_radius_deg_x10",
+            int(round(cc_enc_param.erp_angular_radius_deg * 10)),
+        )
+        self.set_value("erp_max_horizontal", cc_enc_param.erp_max_horizontal)
         self.set_value("img_size", cc_enc_param.img_size)
         self.set_value("latent_resolution", cc_enc_param.latent_resolution)
         self.set_value("n_latent_grids", cc_enc_param.n_latent_grids)
@@ -373,5 +386,9 @@ class CoolChicHeader(AbstractHeader):
             flag_common_randomness=self.get_value("flag_common_randomness"),
             img_size=self.get_value("img_size"),
             final_upsampling_type=self.get_value("final_upsampling_type"),
+            flag_erp_context=bool(self.get_value("flag_erp_context")),
+            erp_vertical_radius=self.get_value("erp_vertical_radius"),
+            erp_angular_radius_deg=self.get_value("erp_angular_radius_deg_x10") / 10.0,
+            erp_max_horizontal=self.get_value("erp_max_horizontal"),
         )
         return param

@@ -193,6 +193,18 @@ def get_coolchic_param_from_args(
     # Add ARM parameters
     coolchic_param.update(_parse_spatial_arm_archi(getattr(args, f"arm_{coolchic_enc_name}")))
 
+    # Add ERP geodesic context parameters (all have defaults, so they're always present)
+    coolchic_param["flag_erp_context"] = bool(getattr(args, f"erp_{coolchic_enc_name}", False))
+    coolchic_param["erp_vertical_radius"] = int(
+        getattr(args, f"erp_vertical_radius_{coolchic_enc_name}", 4)
+    )
+    coolchic_param["erp_angular_radius_deg"] = float(
+        getattr(args, f"erp_angular_radius_deg_{coolchic_enc_name}", 10.0)
+    )
+    coolchic_param["erp_max_horizontal"] = int(
+        getattr(args, f"erp_max_horizontal_{coolchic_enc_name}", 40)
+    )
+
     return coolchic_param
 
 

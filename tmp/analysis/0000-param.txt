@@ -1,0 +1,30 @@
+Namespace(input='/Users/diego/Documents/Faculdade/Pesquisa/Cool-Chic/samples/images/othim01.png', output='/tmp/test.cool', nobitstream=False, workdir='/tmp/analysis/', lmbda=0.001, print_detailed_archi=False, print_detailed_struct=False, intra_pos='0', p_pos='', n_frames=1, frame_offset=0, coding_idx=0, dec_cfg_residue='cfg/dec/intra/hop.cfg', dec_cfg_motion=None, start_lr=0.01, n_itr=2000, n_itr_pretrain_motion=1000, tune='mse', debug=False, layers_synthesis_residue='48-1-linear-relu,3-1-linear-none,3-3-residual-relu,3-3-residual-none/stabiliser', layers_synthesis_motion='16-1-linear-relu,X-1-linear-none/stabiliser', arm_residue='14,2/stabiliser', arm_motion='6,2/stabiliser', output_feature_ifce_residue=6, output_feature_ifce_motion=6, ifce_resolution_residue='0-2', ifce_resolution_motion='2-2', hyperlatent_resolution_residue='auto', hyperlatent_resolution_motion='no', latent_resolution_residue='auto', latent_resolution_motion='2-6', ups_k_size_residue=8, ups_k_size_motion=8, ups_preconcat_k_size_residue=7, ups_preconcat_k_size_motion=7, warp_filter_size=8)
+
+Command Line Args:   -i /Users/diego/Documents/Faculdade/Pesquisa/Cool-Chic/samples/images/othim01.png -o /tmp/test.cool --workdir /tmp/analysis/ --lmbda 1e-3 --dec_cfg_residue cfg/dec/intra/hop.cfg --n_itr 2000
+Config File (cfg/dec/intra/hop.cfg):
+  latent_resolution_residue:auto
+  hyperlatent_resolution_residue:auto
+  arm_residue:       14,2/stabiliser
+  output_feature_ifce_residue:6
+  ifce_resolution_residue:0-2
+  layers_synthesis_residue:48-1-linear-relu,3-1-linear-none,3-3-residual-relu,3-3-residual-none/stabiliser
+  ups_k_size_residue:8
+  ups_preconcat_k_size_residue:7
+Defaults:
+  --intra_pos:       0
+  --p_pos:           
+  --n_frames:        1
+  --frame_offset:    0
+  --coding_idx:      0
+  --start_lr:        0.01
+  --n_itr_pretrain_motion:1000
+  --tune:            mse
+  --layers_synthesis_motion:16-1-linear-relu,X-1-linear-none/stabiliser
+  --arm_motion:      6,2/stabiliser
+  --output_feature_ifce_motion:6
+  --ifce_resolution_motion:2-2
+  --hyperlatent_resolution_motion:no
+  --latent_resolution_motion:2-6
+  --ups_k_size_motion:8
+  --ups_preconcat_k_size_motion:7
+  --warp_filter_size:8

@@ -1,0 +1,251 @@
+# Software Name: Cool-Chic
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 Orange
+# SPDX-License-Identifier: BSD 3-Clause "New"
+#
+# This software is distributed under the BSD-3-Clause license.
+#
+# Authors: see CONTRIBUTORS.md
+
+"""ERP (Equirectangular Projection) geometry utilities.
+
+This module provides functions to compute geodesic (great-circle) distances
+between ERP pixels and to build a precomputed context-index tensor that, for
+each pixel in a latent grid, selects the *dim_arm* causally available
+neighbours that are geodesically closest to it.
+
+The context-index tensor is computed **once** at model initialisation and
+cached as a PyTorch buffer, so it adds negligible overhead at runtime.
+"""
+
+from typing import List, Tuple
+
+import numpy as np
+import torch
+from torch import Tensor
+
+
+# ------------------------------------------------------------------ #
+#  Spherical coordinate helpers                                        #
+# ------------------------------------------------------------------ #
+
+def _latitude(row: int, H: int) -> float:
+    """Latitude (in radians) of the centre of ERP pixel row *row*.
+
+    The equator corresponds to row = H/2.  North pole is row = 0.
+    """
+    return np.pi * (0.5 - (row + 0.5) / H)
+
+
+def _longitude(col: int, W: int) -> float:
+    """Longitude (in radians) of the centre of ERP pixel column *col*."""
+    return 2 * np.pi * (col + 0.5) / W - np.pi
+
+
+def _geodesic_distance(phi1: float, theta1: float,
+                       phi2: float, theta2: float) -> float:
+    """Great-circle distance (radians) between two points on the unit sphere.
+
+    Args:
+        phi1, phi2: Latitudes in radians.
+        theta1, theta2: Longitudes in radians.
+
+    Returns:
+        Angular distance in radians, in [0, pi].
+    """
+    cos_angle = (
+        np.sin(phi1) * np.sin(phi2)
+        + np.cos(phi1) * np.cos(phi2) * np.cos(theta1 - theta2)
+    )
+    return float(np.arccos(np.clip(cos_angle, -1.0, 1.0)))
+
+
+def _horizontal_radius_from_angle(
+    row: int,
+    H: int,
+    W: int,
+    angular_radius_deg: float = 10.0,
+    max_horizontal: int = 40,
+) -> int:
+    """Number of horizontal pixels needed to cover *angular_radius_deg* degrees
+    on the sphere at latitude *row*.
+
+    At the equator the horizontal pixel spacing equals 360/W degrees;
+    near the poles the spacing shrinks as cos(lat), so more pixels are needed
+    to cover the same angular support.
+
+    Args:
+        row: Row index (0 = north pole).
+        H: Total height of the latent grid.
+        W: Total width of the latent grid.
+        angular_radius_deg: Desired angular support in degrees.
+        max_horizontal: Hard cap on the returned radius (in pixels).
+
+    Returns:
+        Integer horizontal radius (>= 1).
+    """
+    phi = _latitude(row, H)
+    theta_per_pixel = 2.0 * np.pi / W
+    angular_radius = np.deg2rad(angular_radius_deg)
+    cos_phi = max(float(np.cos(phi)), 1e-6)
+    radius = int(np.ceil(angular_radius / (theta_per_pixel * cos_phi)))
+    return min(max(radius, 1), max_horizontal)
+
+
+# ------------------------------------------------------------------ #
+#  Causal candidate generation                                         #
+# ------------------------------------------------------------------ #
+
+def _get_causal_candidates(
+    row: int,
+    col: int,
+    H: int,
+    W: int,
+    vertical_radius: int = 4,
+    angular_radius_deg: float = 10.0,
+    max_horizontal: int = 40,
+) -> List[Tuple[int, int]]:
+    """Return all causal neighbour pixels within an adaptive window.
+
+    "Causal" here means: strictly above the current pixel (any column) or on
+    the same row but strictly to the left -- matching the raster-scan decoding
+    order used by Cool-Chic.
+
+    Horizontal columns wrap around (ERP is periodic in longitude).
+    Vertical rows are clamped to [0, H-1] (no wrap, poles are boundaries).
+
+    Args:
+        row: Row of the pixel being decoded.
+        col: Column of the pixel being decoded.
+        H: Latent grid height.
+        W: Latent grid width.
+        vertical_radius: Number of rows above *row* to consider.
+        angular_radius_deg: Angular support for the adaptive horizontal radius.
+        max_horizontal: Hard cap on horizontal radius (pixels).
+
+    Returns:
+        List of (rr, cc) pixel coordinates of causal neighbours.
+    """
+    candidates: List[Tuple[int, int]] = []
+
+    for dy in range(-vertical_radius, 1):
+        rr = row + dy
+        if rr < 0:
+            continue
+
+        # Adaptive horizontal radius for this specific row
+        hr = _horizontal_radius_from_angle(rr, H, W, angular_radius_deg, max_horizontal)
+
+        if dy == 0:
+            # Same row: only pixels strictly to the left are causal.
+            # Do NOT wrap around: col=0 has no same-row context.
+            dx_range = range(-min(hr, col), 0)  # dx in [-hr..-1], but col+dx >= 0
+            for dx in dx_range:
+                cc = col + dx   # no wrap; cc >= 0 guaranteed
+                candidates.append((rr, cc))
+        else:
+            # Rows above: all pixels in the horizontal window are causal
+            # (rr < row => flat index rr*W + cc < row*W regardless of cc).
+            # Longitude wrap is valid here.
+            for dx in range(-hr, hr + 1):
+                cc = (col + dx) % W
+                candidates.append((rr, cc))
+
+    return candidates
+
+
+
+# ------------------------------------------------------------------ #
+#  Context-index tensor                                                #
+# ------------------------------------------------------------------ #
+
+def build_erp_context_index(
+    H: int,
+    W: int,
+    dim_arm: int,
+    vertical_radius: int = 4,
+    angular_radius_deg: float = 10.0,
+    max_horizontal: int = 40,
+) -> Tensor:
+    """Build the ERP context-index tensor for a latent grid of size H x W.
+
+    For every pixel (row, col), the function:
+      1. Collects all causal candidates in the adaptive window.
+      2. Sorts them by geodesic distance (ascending).
+      3. Keeps the *dim_arm* closest ones.
+      4. Records their flat index ``row * W + col``.
+
+    If a pixel has fewer than *dim_arm* causal neighbours (e.g., top-left
+    corner), the missing slots are filled with index 0 -- which corresponds to
+    the top-left pixel.  Because the context grid is zero-padded before use,
+    this safely produces a zero context for those slots.
+
+    Args:
+        H: Latent grid height.
+        W: Latent grid width.
+        dim_arm: Number of context pixels required by the ARM MLP.
+        vertical_radius: Rows above current pixel to consider.
+        angular_radius_deg: Angular support for adaptive horizontal window.
+        max_horizontal: Hard cap on horizontal radius (pixels).
+
+    Returns:
+        LongTensor of shape ``[H * W, dim_arm]`` containing flat indices into
+        the H x W grid.  The tensor should be registered as a PyTorch buffer
+        (``persistent=True``) so that it is saved with the model checkpoint and
+        moved to the correct device automatically.
+    """
+    index = np.zeros((H * W, dim_arm), dtype=np.int64)
+
+    phi = np.array([_latitude(r, H) for r in range(H)])
+    sin_phi = np.sin(phi)
+    cos_phi = np.cos(phi)
+
+    for row in range(H):
+        rel_candidates = []
+        for dy in range(-vertical_radius, 1):
+            rr = row + dy
+            if rr < 0:
+                continue
+            hr = _horizontal_radius_from_angle(rr, H, W, angular_radius_deg, max_horizontal)
+            if dy == 0:
+                for dx in range(-hr, 0):
+                    rel_candidates.append((dy, dx, rr))
+            else:
+                for dx in range(-hr, hr + 1):
+                    rel_candidates.append((dy, dx, rr))
+        
+        if not rel_candidates:
+            continue
+
+        dtheta = np.array([c[1] * 2 * np.pi / W for c in rel_candidates])
+        rr_arr = np.array([c[2] for c in rel_candidates])
+        
+        sin_phi0 = sin_phi[row]
+        cos_phi0 = cos_phi[row]
+        sin_phi1 = sin_phi[rr_arr]
+        cos_phi1 = cos_phi[rr_arr]
+
+        cos_angle = sin_phi0 * sin_phi1 + cos_phi0 * cos_phi1 * np.cos(dtheta)
+        cos_angle = np.clip(cos_angle, -1.0, 1.0)
+        distances = np.arccos(cos_angle)
+
+        sorted_idx = np.argsort(distances, kind='mergesort')
+        sorted_rel_cands = [rel_candidates[i] for i in sorted_idx]
+
+        for col in range(W):
+            flat_pixel = row * W + col
+            valid_flat_indices = []
+            
+            for dy, dx, rr in sorted_rel_cands:
+                if dy == 0 and col + dx < 0:
+                    continue
+                cc = (col + dx) % W
+                valid_flat_indices.append(rr * W + cc)
+                if len(valid_flat_indices) == dim_arm:
+                    break
+            
+            while len(valid_flat_indices) < dim_arm:
+                valid_flat_indices.append(0)
+                
+            index[flat_pixel, :] = valid_flat_indices
+
+    return torch.from_numpy(index)

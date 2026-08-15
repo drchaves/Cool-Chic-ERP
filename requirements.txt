@@ -8,3 +8,4 @@ pytest
 pytest-order
 scipy
 constriction==0.4.2
+numpy>=2.1.0

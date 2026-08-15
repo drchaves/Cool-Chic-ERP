@@ -211,6 +211,44 @@ if __name__ == "__main__":
     )
 
     parser.add(
+        "--erp_residue",
+        action="store_true",
+        default=False,
+        help="Enable ERP geodesic context selection for the residue ARM. "
+        "When set, the ARM selects the dim_arm spatially closest neighbours "
+        "by great-circle (geodesic) distance instead of using the standard "
+        "rectangular causal mask. Designed for 360-degree equirectangular images.",
+    )
+    parser.add(
+        "--erp_vertical_radius_residue",
+        type=int,
+        default=4,
+        help="(ERP) Number of rows above the current pixel to consider as "
+        "context candidates. Only used when --erp_residue is set.",
+    )
+    parser.add(
+        "--erp_angular_radius_deg_residue",
+        type=float,
+        default=10.0,
+        help="(ERP) Angular support in degrees for the adaptive horizontal "
+        "context window. Only used when --erp_residue is set.",
+    )
+    parser.add(
+        "--erp_max_horizontal_residue",
+        type=int,
+        default=40,
+        help="(ERP) Hard cap on the horizontal context radius in pixels. "
+        "Only used when --erp_residue is set.",
+    )
+
+    parser.add(
+        "--erp_motion",
+        action="store_true",
+        default=False,
+        help="Identical to --erp_residue but for the motion decoder.",
+    )
+
+    parser.add(
         "--output_feature_ifce_residue",
         type=int,
         default=6,

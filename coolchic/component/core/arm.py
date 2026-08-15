@@ -560,3 +560,27 @@ def _get_non_zero_pixel_ctx_index(n_spatial_ctx: int) -> Tensor:
     ]
 
     return selected_neighbors
+
+
+def get_erp_neighbor(x: Tensor, erp_ctx_index: Tensor) -> Tensor:
+    """Extract spatial context using precomputed ERP geodesic indices.
+
+    This is the ERP-aware replacement for :func:`_get_neighbor`.  Instead of
+    using a fixed rectangular unfold mask, it uses a precomputed index tensor
+    (built by :func:`~coolchic.component.core.erp_geometry.build_erp_context_index`)
+    that selects the *dim_arm* causally available neighbours with the smallest
+    geodesic distance for each pixel.
+
+    Args:
+        x: Latent grid of shape ``[1, 1, H, W]``.
+        erp_ctx_index: Long tensor of shape ``[H * W, dim_arm]`` containing the
+            flat indices (``row * W + col``) of the selected neighbours, as
+            returned by :func:`~coolchic.component.core.erp_geometry.build_erp_context_index`.
+            This tensor must already be on the same device as *x*.
+
+    Returns:
+        Tensor of shape ``[H * W, dim_arm]`` holding the context values for
+        each pixel, ready to be passed directly to the ARM MLP.
+    """
+    x_flat = x.reshape(-1)                    # [H * W]
+    return x_flat[erp_ctx_index]              # [H * W, dim_arm]

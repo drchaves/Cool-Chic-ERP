@@ -26,6 +26,7 @@ def entropy_coding_latent_arm(
     range_coder: RangeCoder,
     mode: Literal["encode", "decode"],
     n_spatial_context: int,
+    erp_ctx_index: Optional[Tensor] = None,
 ) -> Tensor:
     """Either encode the encoder data into the range_coder internal byte buffer (if mode=="encode")
     or decoder the range coder byte buffer.
@@ -49,6 +50,11 @@ def entropy_coding_latent_arm(
         range_coder (RangeCoder): Range Coder object used to perform the entropy coding
         mode (Literal["encode", "decode"]): _description_
         n_spatial_context (int): Number of spatial contexts.
+        erp_ctx_index (Optional[Tensor]): When provided, replaces the fixed rectangular
+            offset mask with per-pixel geodesic neighbour indices of shape
+            ``[H * W, n_spatial_context]``, as produced by
+            :func:`~coolchic.component.core.erp_geometry.build_erp_context_index`.
+            Set to ``None`` (default) to use the standard rectangular mask.
 
     Returns:
         Tensor: The decoded latent of shape [1, 1, H, W]. Should be equal to encoder_data when mode == "encode"
@@ -135,15 +141,39 @@ def entropy_coding_latent_arm(
             pad + all_start_x_repeat - (ARM_MASK_SIZE + 1) * i
         )
 
-    all_neighbor_idx = (
-        all_idx.view(-1, max_parallel_decoded, 1).repeat(1, 1, n_spatial_context) - offset_index_arm
-    )
+    all_neighbor_idx: Tensor
+    erp_ctx_padded: Tensor = None  # type: ignore[assignment]
+    if erp_ctx_index is not None:
+        # ERP path -------------------------------------------------------
+        # Pre-convert erp_ctx_index from unpadded flat indices to padded flat
+        # indices, so context lookups into data_to_fill are correct.
+        # erp_ctx_index: [H*W, n_spatial_context]  (unpadded coords)
+        row_up = erp_ctx_index // w                              # [H*W, n_ctx]
+        col_up = erp_ctx_index  % w                              # [H*W, n_ctx]
+        erp_ctx_padded = (row_up + pad) * padded_width + (col_up + pad)  # [H*W, n_ctx]
+        # Dummy all_neighbor_idx; actual lookup happens per-step inside the loop
+        all_neighbor_idx = torch.zeros(1, dtype=torch.int64)
+    else:
+        # Standard path --------------------------------------------------
+        all_neighbor_idx = (
+            all_idx.view(-1, max_parallel_decoded, 1).repeat(1, 1, n_spatial_context) - offset_index_arm
+        )
 
     for index_coding in range(coding_order.max() + 1):
         n_decoded_value = occurrence_coding_order[index_coding]
         idx = all_idx[index_coding, :n_decoded_value]
 
-        neighbor_idx = all_neighbor_idx[index_coding, :n_decoded_value, :].flatten()
+        if erp_ctx_index is not None:
+            # Convert padded index back to unpadded row/col to look up erp_ctx_padded
+            padded_row = idx // padded_width
+            padded_col = idx % padded_width
+            unpadded_row = padded_row - pad
+            unpadded_col = padded_col - pad
+            unpadded_flat = unpadded_row * w + unpadded_col
+            neighbor_idx = erp_ctx_padded[unpadded_flat].flatten().to(torch.int32)
+        else:
+            neighbor_idx = all_neighbor_idx[index_coding, :n_decoded_value, :].flatten()
+
         # Pick context in data to fill to avoid seing forbidden value
         context = torch.index_select(data_to_fill, dim=0, index=neighbor_idx).view(
             -1, n_spatial_context

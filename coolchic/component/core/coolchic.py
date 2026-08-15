@@ -24,6 +24,7 @@ from coolchic.component.core.arm import (
     _get_non_zero_pixel_ctx_index,
     _laplace_cdf,
     compute_rate,
+    get_erp_neighbor,
 )
 from coolchic.component.core.noise import CommonGaussianNoiseGenerator
 from coolchic.component.core.quantizer import (
@@ -117,6 +118,12 @@ class CoolChicEncoderParameter:
     # is not 1/1, there is a final upsampling.
     final_upsampling_type: Literal["nearest", "bilinear", "bicubic"]
     encoder_gain: int = 16
+
+    # ---- ERP geodesic context (optional, all have defaults)
+    flag_erp_context: bool = False
+    erp_vertical_radius: int = 4
+    erp_angular_radius_deg: float = 10.0
+    erp_max_horizontal: int = 40
 
     # ==================== Not set by the init function ===================== #
     # Set to true if there is at least one feature of common randomness requested
@@ -306,6 +313,27 @@ class CoolChicEncoder(nn.Module):
             _get_non_zero_pixel_ctx_index(self.param.spatial_context_arm),
             persistent=False,
         )
+
+        # Build per-resolution ERP geodesic context indices (one per latent grid).
+        # Each buffer is a [H_i * W_i, dim_arm] LongTensor stored persistently so
+        # that it is saved in checkpoints and moved to the correct device automatically.
+        self._erp_ctx_latent_keys: List[str] = []
+        if self.param.flag_erp_context:
+            from coolchic.component.core.erp_geometry import build_erp_context_index
+            for i, (_, _, h_i, w_i) in enumerate(self.param.size_per_latent):
+                key = f"erp_ctx_latent_{i}"
+                self._erp_ctx_latent_keys.append(key)
+                self.register_buffer(
+                    key,
+                    build_erp_context_index(
+                        h_i, w_i,
+                        self.param.spatial_context_arm,
+                        self.param.erp_vertical_radius,
+                        self.param.erp_angular_radius_deg,
+                        self.param.erp_max_horizontal,
+                    ),
+                    persistent=True,
+                )
 
         self.arm = instantiate_arm_from_cc_param(self.param)
         self.synthesis = instantiate_syn_from_cc_param(self.param)
@@ -685,10 +713,18 @@ class CoolChicEncoder(nn.Module):
                 continue
 
             flat_latent.append(spatial_latent_i.view(-1))
-            cur_context_spatial = _get_neighbor(
-                spatial_latent_i, self.non_zero_pixel_ctx_index, self.mask_size
-            )
-            cur_context_spatial = rearrange(cur_context_spatial, "b 1 n_context -> b n_context")
+
+            if self.param.flag_erp_context and self._erp_ctx_latent_keys:
+                # ERP path: use precomputed geodesic context indices
+                erp_ctx_idx = getattr(self, self._erp_ctx_latent_keys[idx_latent])
+                cur_context_spatial = get_erp_neighbor(spatial_latent_i, erp_ctx_idx)
+            else:
+                # Standard path: rectangular causal mask
+                cur_context_spatial = _get_neighbor(
+                    spatial_latent_i, self.non_zero_pixel_ctx_index, self.mask_size
+                )
+                cur_context_spatial = rearrange(cur_context_spatial, "b 1 n_context -> b n_context")
+
             flat_context_spatial.append(cur_context_spatial)
 
         flat_context_spatial = torch.cat(flat_context_spatial, dim=0)
