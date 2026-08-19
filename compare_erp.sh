@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-IMAGE="${1:-/Users/diego/Documents/Faculdade/Pesquisa/Cool-Chic/samples/images/othim01.png}"
+IMAGE="${1:-/home/diego/Cool-Chic-ERP/samples/images/othim01.png}"
 LMBDA="${2:-1e-3}"
 #FULL="${FULL:-0}"
 FULL=1

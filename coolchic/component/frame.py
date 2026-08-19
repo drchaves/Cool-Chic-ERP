@@ -371,7 +371,7 @@ class FrameEncoder(nn.Module):
         Args:
             param (OrderedDict[NAME_COOLCHIC_ENC, Tensor]): Parameters to be set.
         """
-        self.load_state_dict(param)
+        self.load_state_dict(param, strict=False)
 
     def reinitialize_parameters(self) -> None:
         """Reinitialize in place the different parameters of a FrameEncoder."""
