@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda    seq_name   n_pixels   display_order   coding_order   
+0.2113490   40.7770950   1.2773285   0.0001   othim01    524288     0               0              
