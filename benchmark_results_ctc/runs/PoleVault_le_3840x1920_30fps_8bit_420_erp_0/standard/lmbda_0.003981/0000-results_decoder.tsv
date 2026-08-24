@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                      n_pixels   display_order   coding_order   
+2.7233949   28.7068172   0.3457794   0.003981   PoleVault_le_3840x1920_30fps_8bit_420_erp_0   524288     0               0              

@@ -15,9 +15,17 @@ neighbours that are geodesically closest to it.
 
 The context-index tensor is computed **once** at model initialisation and
 cached as a PyTorch buffer, so it adds negligible overhead at runtime.
+
+Polar-only mode
+~~~~~~~~~~~~~~~
+When ``polar_threshold_deg`` is set to a value > 0, the geodesic context is
+only applied to rows whose absolute latitude exceeds that threshold (i.e. the
+polar caps).  Equatorial rows fall back to the standard rectangular causal
+pattern used by the baseline ARM, which has no overhead near the equator where
+the ERP distortion is negligible.
 """
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -158,6 +166,56 @@ def _get_causal_candidates(
 #  Context-index tensor                                                #
 # ------------------------------------------------------------------ #
 
+def _build_rect_context_index_row(row: int, H: int, W: int, dim_arm: int,
+                                   vertical_radius: int) -> np.ndarray:
+    """Return the rectangular causal context indices for all pixels in *row*.
+
+    This replicates the fixed (non-geodesic) causal mask used by the standard
+    ARM: for each pixel we collect up to *dim_arm* causal neighbours in raster
+    order (pixels above, then same row to the left), starting from the nearest.
+
+    Args:
+        row: Row index in the latent grid.
+        H: Grid height.
+        W: Grid width.
+        dim_arm: Number of context slots.
+        vertical_radius: How many rows above to consider.
+
+    Returns:
+        int64 array of shape ``[W, dim_arm]`` with flat indices.
+    """
+    out = np.zeros((W, dim_arm), dtype=np.int64)
+    for col in range(W):
+        neighbours = []
+        # Rows above in reverse distance order (closest first)
+        for dy in range(-1, -vertical_radius - 1, -1):
+            rr = row + dy
+            if rr < 0:
+                break
+            for dx in range(0, W):
+                # expand outward from directly above
+                for cc_delta in ([0] if dx == 0 else [-dx, dx]):
+                    cc = col + cc_delta
+                    if 0 <= cc < W:
+                        neighbours.append(rr * W + cc)
+                    if len(neighbours) == dim_arm:
+                        break
+                if len(neighbours) == dim_arm:
+                    break
+            if len(neighbours) == dim_arm:
+                break
+        # Same row: pixels strictly to the left
+        for dx in range(-1, -col - 1, -1):
+            neighbours.append(row * W + (col + dx))
+            if len(neighbours) == dim_arm:
+                break
+        # Pad with 0 if not enough neighbours
+        while len(neighbours) < dim_arm:
+            neighbours.append(0)
+        out[col, :] = neighbours[:dim_arm]
+    return out
+
+
 def build_erp_context_index(
     H: int,
     W: int,
@@ -165,6 +223,7 @@ def build_erp_context_index(
     vertical_radius: int = 4,
     angular_radius_deg: float = 10.0,
     max_horizontal: int = 40,
+    polar_threshold_deg: float = 0.0,
 ) -> Tensor:
     """Build the ERP context-index tensor for a latent grid of size H x W.
 
@@ -179,6 +238,11 @@ def build_erp_context_index(
     the top-left pixel.  Because the context grid is zero-padded before use,
     this safely produces a zero context for those slots.
 
+    **Polar-only mode** (``polar_threshold_deg > 0``): rows whose absolute
+    latitude is *below* the threshold fall back to a standard rectangular
+    causal context, avoiding the geodesic overhead in equatorial regions where
+    the ERP distortion is negligible and the extra context brings no benefit.
+
     Args:
         H: Latent grid height.
         W: Latent grid width.
@@ -186,6 +250,10 @@ def build_erp_context_index(
         vertical_radius: Rows above current pixel to consider.
         angular_radius_deg: Angular support for adaptive horizontal window.
         max_horizontal: Hard cap on horizontal radius (pixels).
+        polar_threshold_deg: Absolute latitude (degrees) below which the
+            standard rectangular context is used instead of the geodesic one.
+            Set to 0 (default) to always use the geodesic context (original
+            behaviour).
 
     Returns:
         LongTensor of shape ``[H * W, dim_arm]`` containing flat indices into
@@ -195,11 +263,19 @@ def build_erp_context_index(
     """
     index = np.zeros((H * W, dim_arm), dtype=np.int64)
 
-    phi = np.array([_latitude(r, H) for r in range(H)])
+    phi = np.array([_latitude(r, H) for r in range(H)])       # in radians
     sin_phi = np.sin(phi)
     cos_phi = np.cos(phi)
+    polar_threshold_rad = np.deg2rad(polar_threshold_deg)
 
     for row in range(H):
+        # ── Polar-only mode: fall back to rectangular for equatorial rows ──
+        if polar_threshold_deg > 0.0 and abs(phi[row]) < polar_threshold_rad:
+            rect = _build_rect_context_index_row(row, H, W, dim_arm, vertical_radius)
+            index[row * W:(row + 1) * W, :] = rect
+            continue
+
+        # ── Geodesic context for polar rows (or all rows when threshold = 0) ─
         rel_candidates = []
         for dy in range(-vertical_radius, 1):
             rr = row + dy
@@ -212,13 +288,13 @@ def build_erp_context_index(
             else:
                 for dx in range(-hr, hr + 1):
                     rel_candidates.append((dy, dx, rr))
-        
+
         if not rel_candidates:
             continue
 
         dtheta = np.array([c[1] * 2 * np.pi / W for c in rel_candidates])
         rr_arr = np.array([c[2] for c in rel_candidates])
-        
+
         sin_phi0 = sin_phi[row]
         cos_phi0 = cos_phi[row]
         sin_phi1 = sin_phi[rr_arr]
@@ -234,7 +310,7 @@ def build_erp_context_index(
         for col in range(W):
             flat_pixel = row * W + col
             valid_flat_indices = []
-            
+
             for dy, dx, rr in sorted_rel_cands:
                 if dy == 0 and col + dx < 0:
                     continue
@@ -242,10 +318,10 @@ def build_erp_context_index(
                 valid_flat_indices.append(rr * W + cc)
                 if len(valid_flat_indices) == dim_arm:
                     break
-            
+
             while len(valid_flat_indices) < dim_arm:
                 valid_flat_indices.append(0)
-                
+
             index[flat_pixel, :] = valid_flat_indices
 
     return torch.from_numpy(index)

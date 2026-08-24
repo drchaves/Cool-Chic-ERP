@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                  n_pixels   display_order   coding_order   
+0.3928735   37.8132492   0.3604126   0.000631   Harbor_8192x4096_30fps_8bit_420_erp_150   524288     0               0              

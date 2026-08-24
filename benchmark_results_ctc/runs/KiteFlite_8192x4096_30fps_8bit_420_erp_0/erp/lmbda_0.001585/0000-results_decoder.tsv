@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                   n_pixels   display_order   coding_order   
+1.5288453   32.0403822   0.5701752   0.001585   KiteFlite_8192x4096_30fps_8bit_420_erp_0   524288     0               0              

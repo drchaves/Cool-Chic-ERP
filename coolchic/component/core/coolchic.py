@@ -124,6 +124,9 @@ class CoolChicEncoderParameter:
     erp_vertical_radius: int = 4
     erp_angular_radius_deg: float = 10.0
     erp_max_horizontal: int = 40
+    # Polar-only mode: ERP context is only used for rows with |lat| > threshold.
+    # Set to 0.0 to apply ERP context to all rows (original behaviour).
+    erp_polar_threshold_deg: float = 0.0
 
     # ==================== Not set by the init function ===================== #
     # Set to true if there is at least one feature of common randomness requested
@@ -331,6 +334,7 @@ class CoolChicEncoder(nn.Module):
                         self.param.erp_vertical_radius,
                         self.param.erp_angular_radius_deg,
                         self.param.erp_max_horizontal,
+                        self.param.erp_polar_threshold_deg,
                     ),
                     persistent=True,
                 )

@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda   seq_name                                         n_pixels   display_order   coding_order   
+1.7513065   30.7239341   0.0904846   0.01    DrivingInCity_3840x1920_30fps_8bit_420_erp_150   524288     0               0              

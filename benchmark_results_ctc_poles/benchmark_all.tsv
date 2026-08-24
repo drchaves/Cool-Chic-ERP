@@ -1,0 +1,2 @@
+image_name    	mode      	lmbda       	loss        	psnr_db     	rate_bpp    	n_pixels    	display_order 	coding_order
+AerialCity_3840x1920_30fps_8bit_420_erp_0	erp_polar30	0.01        	2.8936190   	28.4834168  	0.1475677   	524288      	0             	0           

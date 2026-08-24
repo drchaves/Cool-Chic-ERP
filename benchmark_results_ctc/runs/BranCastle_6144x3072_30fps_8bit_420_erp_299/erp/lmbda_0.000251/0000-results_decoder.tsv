@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                      n_pixels   display_order   coding_order   
+0.4896726   38.0809470   1.3311157   0.000251   BranCastle_6144x3072_30fps_8bit_420_erp_299   524288     0               0              

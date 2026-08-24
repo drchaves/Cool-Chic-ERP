@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 
 IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images}"
-OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results}"
+OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_ctc_poles}"
 
 FULL="${FULL:-1}"
 
@@ -47,8 +47,9 @@ LAMBDAS=(
 
 # Modes: each entry is "label|extra_flags"
 MODES=(
-    "standard|"
-    "erp|--erp_residue"
+    #"standard|"
+    #"erp|--erp_residue"
+    "erp_polar30|--erp_residue --erp_polar_threshold_deg_residue 30.0"
 )
 
 # ─────────────────────────────────────────────

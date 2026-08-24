@@ -204,6 +204,9 @@ def get_coolchic_param_from_args(
     coolchic_param["erp_max_horizontal"] = int(
         getattr(args, f"erp_max_horizontal_{coolchic_enc_name}", 40)
     )
+    coolchic_param["erp_polar_threshold_deg"] = float(
+        getattr(args, f"erp_polar_threshold_deg_{coolchic_enc_name}", 0.0)
+    )
 
     return coolchic_param
 

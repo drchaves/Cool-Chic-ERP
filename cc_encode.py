@@ -240,6 +240,18 @@ if __name__ == "__main__":
         help="(ERP) Hard cap on the horizontal context radius in pixels. "
         "Only used when --erp_residue is set.",
     )
+    parser.add(
+        "--erp_polar_threshold_deg_residue",
+        type=float,
+        default=0.0,
+        help="(ERP) Absolute latitude threshold in degrees. When > 0, the "
+        "geodesic ERP context is only applied to rows whose |latitude| exceeds "
+        "this value (polar caps). Equatorial rows use the standard rectangular "
+        "causal context, reducing overhead where ERP distortion is negligible. "
+        "Example: 30.0 activates ERP only above/below ±30° latitude. "
+        "Set to 0 (default) to apply ERP context to all rows. "
+        "Only used when --erp_residue is set.",
+    )
 
     parser.add(
         "--erp_motion",

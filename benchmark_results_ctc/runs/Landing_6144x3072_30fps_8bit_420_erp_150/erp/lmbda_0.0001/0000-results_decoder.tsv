@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda    seq_name                                   n_pixels   display_order   coding_order   
+0.1831258   41.7336955   1.1604004   0.0001   Landing_6144x3072_30fps_8bit_420_erp_150   524288     0               0              

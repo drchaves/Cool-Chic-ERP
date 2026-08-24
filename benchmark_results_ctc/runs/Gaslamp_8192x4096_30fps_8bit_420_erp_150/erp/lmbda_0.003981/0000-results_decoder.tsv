@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                   n_pixels   display_order   coding_order   
+1.2192947   32.1799875   0.1542206   0.003981   Gaslamp_8192x4096_30fps_8bit_420_erp_150   524288     0               0              

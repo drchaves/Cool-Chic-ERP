@@ -1,0 +1,33 @@
+Namespace(input='/home/diego/Cool-Chic-ERP/samples/images/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0.png', output='/home/diego/Cool-Chic-ERP/benchmark_results_ctc/runs/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0/standard/lmbda_0.003981/bitstream.cool', nobitstream=False, workdir='/home/diego/Cool-Chic-ERP/benchmark_results_ctc/runs/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0/standard/lmbda_0.003981', lmbda=0.003981, print_detailed_archi=False, print_detailed_struct=False, intra_pos='0', p_pos='', n_frames=1, frame_offset=0, coding_idx=0, dec_cfg_residue=None, dec_cfg_motion=None, start_lr=0.01, n_itr=10000, n_itr_pretrain_motion=1000, tune='mse', debug=False, layers_synthesis_residue='48-1-linear-relu,X-1-linear-none,X-3-residual-relu,X-3-residual-none/stabiliser', layers_synthesis_motion='16-1-linear-relu,X-1-linear-none/stabiliser', arm_residue='14,2/stabiliser', arm_motion='6,2/stabiliser', erp_residue=False, erp_vertical_radius_residue=4, erp_angular_radius_deg_residue=10.0, erp_max_horizontal_residue=40, erp_motion=False, output_feature_ifce_residue=6, output_feature_ifce_motion=6, ifce_resolution_residue='0-2', ifce_resolution_motion='2-2', hyperlatent_resolution_residue='auto', hyperlatent_resolution_motion='no', latent_resolution_residue='auto', latent_resolution_motion='2-6', ups_k_size_residue=8, ups_k_size_motion=8, ups_preconcat_k_size_residue=7, ups_preconcat_k_size_motion=7, warp_filter_size=8)
+
+Command Line Args:   --input /home/diego/Cool-Chic-ERP/samples/images/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0.png --output /home/diego/Cool-Chic-ERP/benchmark_results_ctc/runs/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0/standard/lmbda_0.003981/bitstream.cool --workdir /home/diego/Cool-Chic-ERP/benchmark_results_ctc/runs/DrivingInCountry_3840x1920_30fps_8bit_420_erp_0/standard/lmbda_0.003981 --lmbda 0.003981
+Defaults:
+  --intra_pos:       0
+  --p_pos:           
+  --n_frames:        1
+  --frame_offset:    0
+  --coding_idx:      0
+  --start_lr:        0.01
+  --n_itr:           10000
+  --n_itr_pretrain_motion:1000
+  --tune:            mse
+  --layers_synthesis_residue:48-1-linear-relu,X-1-linear-none,X-3-residual-relu,X-3-residual-none/stabiliser
+  --layers_synthesis_motion:16-1-linear-relu,X-1-linear-none/stabiliser
+  --arm_residue:     14,2/stabiliser
+  --arm_motion:      6,2/stabiliser
+  --erp_vertical_radius_residue:4
+  --erp_angular_radius_deg_residue:10.0
+  --erp_max_horizontal_residue:40
+  --output_feature_ifce_residue:6
+  --output_feature_ifce_motion:6
+  --ifce_resolution_residue:0-2
+  --ifce_resolution_motion:2-2
+  --hyperlatent_resolution_residue:auto
+  --hyperlatent_resolution_motion:no
+  --latent_resolution_residue:auto
+  --latent_resolution_motion:2-6
+  --ups_k_size_residue:8
+  --ups_k_size_motion:8
+  --ups_preconcat_k_size_residue:7
+  --ups_preconcat_k_size_motion:7
+  --warp_filter_size:8
