@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                          n_pixels   display_order   coding_order   
+1.6619455   31.1514382   0.2247772   0.003981   DrivingInCountry_3840x1920_30fps_8bit_420_erp_0   524288     0               0              

@@ -17,7 +17,7 @@ import pandas as pd
 
 # ── caminho do TSV ────────────────────────────────────────────────────────────
 TSV_PATH = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_ctc", "benchmark_all.tsv")
+                        "benchmark_results_ctc_poles", "benchmark_all.tsv")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

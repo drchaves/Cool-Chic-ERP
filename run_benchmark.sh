@@ -29,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 
-IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images}"
+IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images/CTC-360-resized}"
 OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_ctc_poles}"
 
 FULL="${FULL:-1}"

@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                   n_pixels   display_order   coding_order   
+3.0075563   29.3203494   0.4617310   0.003981   Trolley_8192x4096_30fps_8bit_420_erp_299   524288     0               0              

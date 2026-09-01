@@ -1,0 +1,2 @@
+loss        psnr_db      rate_bpp    lmbda      seq_name                                      n_pixels   display_order   coding_order   
+0.7316883   35.9675014   0.7584991   0.000631   AerialCity_3840x1920_30fps_8bit_420_erp_150   524288     0               0              
