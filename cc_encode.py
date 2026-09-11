@@ -254,6 +254,20 @@ if __name__ == "__main__":
     )
 
     parser.add(
+        "--erp_pos_enc_residue",
+        action="store_true",
+        default=False,
+        help="(ERP) Enable positional encoding for ERP context slots. When set, "
+        "each of the spatial_context_arm context slots is augmented with two "
+        "normalised spherical displacement scalars (Δlat, Δlon), giving the ARM "
+        "MLP explicit spatial information about where each neighbour sits on the "
+        "sphere. This triples the spatial contribution to the ARM input "
+        "(spatial_context_arm × 3 + ifce_features). "
+        "Only used when --erp_residue is set.",
+    )
+
+
+    parser.add(
         "--erp_motion",
         action="store_true",
         default=False,
@@ -535,6 +549,7 @@ if __name__ == "__main__":
             "loss": f"{logs.loss.item() * 1000.0:9.7f}",
             "psnr_db": f"{logs.detailed_dist_db.get('psnr_db'):9.7f}",
             "rate_bpp": f"{logs.total_rate_bpp:9.7f}",
+            "ws_psnr_db": f"{logs.ws_psnr_db if logs.ws_psnr_db is not None else 0.0:9.7f}",
             "lmbda": f"{preset.lmbda}",
             "seq_name": f"{coding_structure.seq_name}",
             "n_pixels": f"{h * w}",

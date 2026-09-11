@@ -224,7 +224,7 @@ def build_erp_context_index(
     angular_radius_deg: float = 10.0,
     max_horizontal: int = 40,
     polar_threshold_deg: float = 0.0,
-) -> Tensor:
+) -> Tuple[Tensor, Tensor]:
     """Build the ERP context-index tensor for a latent grid of size H x W.
 
     For every pixel (row, col), the function:
@@ -256,12 +256,12 @@ def build_erp_context_index(
             behaviour).
 
     Returns:
-        LongTensor of shape ``[H * W, dim_arm]`` containing flat indices into
-        the H x W grid.  The tensor should be registered as a PyTorch buffer
-        (``persistent=True``) so that it is saved with the model checkpoint and
-        moved to the correct device automatically.
+        Tuple containing:
+        - LongTensor of shape ``[H * W, dim_arm]`` containing flat indices.
+        - FloatTensor of shape ``[H * W, dim_arm]`` containing the normalized weights.
     """
     index = np.zeros((H * W, dim_arm), dtype=np.int64)
+    weights = np.zeros((H * W, dim_arm), dtype=np.float32)
 
     phi = np.array([_latitude(r, H) for r in range(H)])       # in radians
     sin_phi = np.sin(phi)
@@ -273,6 +273,8 @@ def build_erp_context_index(
         if polar_threshold_deg > 0.0 and abs(phi[row]) < polar_threshold_rad:
             rect = _build_rect_context_index_row(row, H, W, dim_arm, vertical_radius)
             index[row * W:(row + 1) * W, :] = rect
+            # weights uniformly distributed for rectangular fallback
+            weights[row * W:(row + 1) * W, :] = 1.0 / dim_arm
             continue
 
         # ── Geodesic context for polar rows (or all rows when threshold = 0) ─
@@ -310,12 +312,15 @@ def build_erp_context_index(
         for col in range(W):
             flat_pixel = row * W + col
             valid_flat_indices = []
+            valid_distances = []
 
             for dy, dx, rr in sorted_rel_cands:
                 if dy == 0 and col + dx < 0:
                     continue
                 cc = (col + dx) % W
                 valid_flat_indices.append(rr * W + cc)
+                dist_idx = sorted_rel_cands.index((dy, dx, rr))
+                valid_distances.append(distances[sorted_idx[dist_idx]])
                 if len(valid_flat_indices) == dim_arm:
                     break
 
@@ -323,5 +328,89 @@ def build_erp_context_index(
                 valid_flat_indices.append(0)
 
             index[flat_pixel, :] = valid_flat_indices
+            
+            n_valid = len(valid_distances)
+            if n_valid > 0:
+                d = np.array(valid_distances)
+                sigma = 1.0
+                w = np.exp(-(d**2) / (2 * sigma**2))
+                if np.sum(w) > 0:
+                    w = w / np.sum(w)
+                weights[flat_pixel, :n_valid] = w
 
-    return torch.from_numpy(index)
+    return torch.from_numpy(index), torch.from_numpy(weights)
+
+
+# ------------------------------------------------------------------ #
+#  Positional encoding for ERP context slots                           #
+# ------------------------------------------------------------------ #
+
+def build_erp_pos_encoding(
+    H: int,
+    W: int,
+    ctx_index: torch.Tensor,
+) -> torch.Tensor:
+    """Build a positional encoding tensor for every ERP context slot.
+
+    For each pixel ``p = (row, col)`` and each of its ``dim_arm`` context
+    slots selected by *ctx_index*, compute the **relative spherical
+    displacement** of the context pixel with respect to ``p``:
+
+    * ``Δlat`` = (lat_ctx − lat_p) / (π/2)  — normalised to roughly [−2, 2]
+    * ``Δlon`` = shortest signed longitude difference / π — normalised to [−1, 1]
+
+    The resulting tensor has shape ``[H * W, dim_arm * 2]``, where for each
+    pixel the features are arranged as::
+
+        [Δlat₀, Δlon₀,  Δlat₁, Δlon₁,  …,  Δlatₙ, Δlonₙ]
+
+    This tensor is intended to be concatenated to the extracted context values
+    (shape ``[H * W, dim_arm]``) before being passed to the ARM MLP, giving it
+    explicit spatial information about where each neighbour lies on the sphere.
+
+    Args:
+        H: Latent grid height.
+        W: Latent grid width.
+        ctx_index: LongTensor ``[H * W, dim_arm]`` as returned by
+            :func:`build_erp_context_index`.  Must be on CPU.
+
+    Returns:
+        Float32 tensor of shape ``[H * W, dim_arm * 2]``.  Each pair of
+        columns ``(2k, 2k+1)`` contains ``(Δlat_norm, Δlon_norm)`` for the
+        *k*-th context slot.
+    """
+    ctx_index_np = ctx_index.numpy()           # [H*W, dim_arm]
+    dim_arm = ctx_index_np.shape[1]
+
+    # Precompute per-row latitudes and per-column longitudes
+    lats = np.array([_latitude(r, H) for r in range(H)], dtype=np.float32)  # [H]
+    lons = np.array([2.0 * np.pi * (c + 0.5) / W - np.pi
+                     for c in range(W)], dtype=np.float32)                   # [W]
+
+    # Pixel (row, col) for every flat index
+    flat = np.arange(H * W, dtype=np.int64)
+    px_rows = flat // W                        # [H*W]
+    px_cols = flat % W                         # [H*W]
+    phi0 = lats[px_rows]                       # [H*W]
+    lon0 = lons[px_cols]                       # [H*W]
+
+    # Context (row, col) for every flat context index  [H*W, dim_arm]
+    ctx_rows = ctx_index_np // W
+    ctx_cols = ctx_index_np % W
+    phi2 = lats[ctx_rows]                      # [H*W, dim_arm]
+    lon2 = lons[ctx_cols]                      # [H*W, dim_arm]
+
+    # ── Δlat: normalised by π/2 so that ±pole ≈ ±2 ──────────────────
+    delta_lat = (phi2 - phi0[:, None]) / (np.pi / 2.0)          # [H*W, dim_arm]
+    delta_lat = np.clip(delta_lat, -2.0, 2.0).astype(np.float32)
+
+    # ── Δlon: wrap to [−π, π] then normalise to [−1, 1] ─────────────
+    delta_lon_raw = lon2 - lon0[:, None]                         # [H*W, dim_arm]
+    delta_lon = (delta_lon_raw + np.pi) % (2.0 * np.pi) - np.pi  # wrap
+    delta_lon_norm = (delta_lon / np.pi).astype(np.float32)      # [−1, 1]
+
+    # Interleave: [H*W, dim_arm, 2] → [H*W, dim_arm * 2]
+    pos_enc = np.stack([delta_lat, delta_lon_norm], axis=-1)     # [H*W, dim_arm, 2]
+    pos_enc = pos_enc.reshape(H * W, dim_arm * 2)
+
+    return torch.from_numpy(pos_enc)

@@ -1,23 +1,38 @@
 """
 bd_rate.py
 
-Calcula a métrica Bjontegaard Delta-Rate (BD-Rate) e BD-PSNR
-comparando os modos 'standard' (baseline) e 'erp' (proposto).
+Calcula a métrica Bjontegaard Delta-Rate (BD-Rate) e BD-PSNR comparando
+todos os modos não-standard presentes no TSV contra o modo 'standard' (baseline).
 
-BD-Rate < 0  →  ERP precisa de MENOS bits para a mesma qualidade (melhor)
-BD-PSNR > 0  →  ERP tem MAIS qualidade para o mesmo bitrate   (melhor)
+Detecta automaticamente os modos disponíveis no TSV — não é necessário
+editar o script quando novos experimentos (ex: erp_polar30, erp_polar60) são adicionados.
+
+BD-Rate < 0  →  proposto precisa de MENOS bits para a mesma qualidade (melhor)
+BD-PSNR > 0  →  proposto tem MAIS qualidade para o mesmo bitrate   (melhor)
 
 Referência: Bjontegaard, G. (2001). "Calculation of Average PSNR Differences
 between RD Curves." VCEG-M33.
+
+Uso:
+    python bd_rate.py                              # usa TSV padrão
+    python bd_rate.py --tsv path/to/benchmark.tsv  # TSV customizado
+    python bd_rate.py --mode erp_polar30           # compara só esse modo
+    python bd_rate.py --all-dirs                   # processa todos os benchmark_results_* encontrados
 """
 
+import argparse
 import os
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
-# ── caminho do TSV ────────────────────────────────────────────────────────────
-TSV_PATH = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_ctc_poles", "benchmark_all.tsv")
+# ── TSV padrão ────────────────────────────────────────────────────────────────
+DEFAULT_TSV = os.path.join(os.path.dirname(__file__),
+                           "benchmark_results_ctc_poles", "benchmark_all.tsv")
+
+BASELINE_MODE = "standard"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -31,7 +46,7 @@ def bd_rate(psnr1, rate1, psnr2, rate2):
     Parâmetros
     ----------
     psnr1, rate1 : arrays da curva de REFERÊNCIA  (standard)
-    psnr2, rate2 : arrays da curva PROPOSTA        (erp)
+    psnr2, rate2 : arrays da curva PROPOSTA        (erp / erp_polar*)
 
     Retorna
     -------
@@ -94,86 +109,171 @@ def bd_rate(psnr1, rate1, psnr2, rate2):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Leitura e processamento
+# Processamento de um TSV
 # ─────────────────────────────────────────────────────────────────────────────
 
-df = pd.read_csv(TSV_PATH, sep=r"\s+", engine="python")
-df.columns    = df.columns.str.strip()
-df["mode"]     = df["mode"].str.strip()
-df["psnr_db"]  = df["psnr_db"].astype(float)
-df["rate_bpp"] = df["rate_bpp"].astype(float)
-df["lmbda"]    = df["lmbda"].astype(float)
+def process_tsv(tsv_path: str, filter_mode: str = None, save_csv: bool = True) -> dict:
+    """Lê um TSV de benchmark, detecta os modos e calcula BD-Rate de cada um.
 
-images = sorted(df["image_name"].unique())
+    Args:
+        tsv_path:    Caminho para o arquivo TSV.
+        filter_mode: Se não-None, processa apenas este modo.
+        save_csv:    Se True, salva um CSV por modo em <dir>/<modo>_bd_rate.csv
 
-# ── BD-Rate por imagem ────────────────────────────────────────────────────────
-rows = []
-for img in images:
-    sub = df[df["image_name"] == img]
-    std = sub[sub["mode"] == "standard"].sort_values("lmbda", ascending=False)
-    erp = sub[sub["mode"] == "erp"].sort_values("lmbda", ascending=False)
+    Returns:
+        dict: {modo: DataFrame com colunas [image, bd_rate_%, bd_psnr_dB]}
+    """
+    tsv_path = Path(tsv_path)
+    if not tsv_path.exists():
+        print(f"  [ERRO] TSV não encontrado: {tsv_path}", file=sys.stderr)
+        return {}
 
-    if len(std) < 4 or len(erp) < 4:
-        print(f"  [AVISO] {img}: pontos insuficientes — pulando.")
-        continue
+    df = pd.read_csv(tsv_path, sep=r"\s+", engine="python")
+    df.columns     = df.columns.str.strip()
+    df["mode"]     = df["mode"].str.strip()
+    df["psnr_db"]  = df["psnr_db"].astype(float)
+    df["rate_bpp"] = df["rate_bpp"].astype(float)
+    df["lmbda"]    = df["lmbda"].astype(float)
 
-    bdr, bdp = bd_rate(std["psnr_db"], std["rate_bpp"],
-                       erp["psnr_db"], erp["rate_bpp"])
-    rows.append({"image": img, "bd_rate_%": bdr, "bd_psnr_dB": bdp})
+    all_modes = sorted(df["mode"].unique())
+    if BASELINE_MODE not in all_modes:
+        print(f"  [ERRO] Modo baseline '{BASELINE_MODE}' não encontrado em {tsv_path.name}",
+              file=sys.stderr)
+        print(f"  Modos disponíveis: {all_modes}", file=sys.stderr)
+        return {}
 
-per_img = pd.DataFrame(rows)
+    # Modos a comparar (todos menos o baseline)
+    candidate_modes = [m for m in all_modes if m != BASELINE_MODE]
+    if filter_mode:
+        if filter_mode not in candidate_modes:
+            print(f"  [ERRO] Modo '{filter_mode}' não encontrado. Disponíveis: {candidate_modes}",
+                  file=sys.stderr)
+            return {}
+        candidate_modes = [filter_mode]
 
-# ── BD-Rate global (média sobre imagens) ─────────────────────────────────────
-avg_df = (df.groupby(["mode", "lmbda"], as_index=False)
-            .agg(psnr_db=("psnr_db", "mean"), rate_bpp=("rate_bpp", "mean"))
-            .sort_values("lmbda", ascending=False))
+    images = sorted(df["image_name"].unique())
+    results = {}
 
-std_avg = avg_df[avg_df["mode"] == "standard"]
-erp_avg = avg_df[avg_df["mode"] == "erp"]
+    SEP = "═" * 72
 
-global_bdr, global_bdp = bd_rate(
-    std_avg["psnr_db"], std_avg["rate_bpp"],
-    erp_avg["psnr_db"], erp_avg["rate_bpp"])
+    print(f"\n{SEP}")
+    print(f"  TSV: {tsv_path.name}")
+    print(f"  Modos detectados: {all_modes}")
+    print(f"  Baseline: {BASELINE_MODE!r}  |  Comparando: {candidate_modes}")
+    print(f"{SEP}")
+
+    for mode in candidate_modes:
+        print(f"\n  ── Modo: {mode!r} vs {BASELINE_MODE!r} ──")
+        print(f"  {'Imagem':<50}  {'BD-Rate':>8}  {'BD-PSNR':>9}")
+        print(f"  {'─'*50}  {'─'*8}  {'─'*9}")
+
+        rows = []
+        for img in images:
+            sub  = df[df["image_name"] == img]
+            std  = sub[sub["mode"] == BASELINE_MODE].sort_values("lmbda", ascending=False)
+            prop = sub[sub["mode"] == mode].sort_values("lmbda", ascending=False)
+
+            if len(std) < 4 or len(prop) < 4:
+                print(f"  [AVISO] {img}: pontos insuficientes ({len(std)} std, {len(prop)} {mode}) — pulando.")
+                continue
+
+            bdr, bdp = bd_rate(std["psnr_db"], std["rate_bpp"],
+                               prop["psnr_db"], prop["rate_bpp"])
+
+            flag_r = "✅" if bdr < 0 else "⚠️ "
+            flag_p = "✅" if bdp > 0 else "⚠️ "
+            print(f"  {img:<50}  {flag_r} {bdr:+6.2f}%  {flag_p} {bdp:+6.4f} dB")
+            rows.append({"image": img, "bd_rate_%": round(bdr, 4), "bd_psnr_dB": round(bdp, 4)})
+
+        if not rows:
+            print(f"  [AVISO] Nenhuma imagem calculada para o modo {mode!r}.")
+            continue
+
+        mode_df = pd.DataFrame(rows)
+        mean_bdr = mode_df["bd_rate_%"].mean()
+        mean_bdp = mode_df["bd_psnr_dB"].mean()
+        print(f"  {'─'*50}  {'─'*8}  {'─'*9}")
+        print(f"  {'MÉDIA':<50}  "
+              f"{'✅' if mean_bdr<0 else '⚠️ '} {mean_bdr:+6.2f}%  "
+              f"{'✅' if mean_bdp>0 else '⚠️ '} {mean_bdp:+6.4f} dB")
+
+        results[mode] = mode_df
+
+        if save_csv:
+            # Nome do CSV inclui o modo para evitar sobrescrever outros experimentos
+            out_csv = tsv_path.parent / f"bd_rate_{mode}.csv"
+            mode_df.to_csv(out_csv, index=False, float_format="%.4f")
+            print(f"\n  💾 Salvo: {out_csv}")
+
+    # ── Sumário comparativo (se múltiplos modos) ──────────────────────────────
+    if len(results) > 1:
+        print(f"\n{SEP}")
+        print(f"  SUMÁRIO COMPARATIVO  ({tsv_path.name})")
+        print(f"  {'Modo':<25}  {'BD-Rate médio':>14}  {'BD-PSNR médio':>14}  {'Melhor que std?':>16}")
+        print(f"  {'─'*25}  {'─'*14}  {'─'*14}  {'─'*16}")
+        for mode, mode_df in results.items():
+            m_bdr = mode_df["bd_rate_%"].mean()
+            m_bdp = mode_df["bd_psnr_dB"].mean()
+            better = "✅ SIM" if m_bdr < 0 else "❌ NÃO"
+            print(f"  {mode:<25}  {m_bdr:>+12.2f}%  {m_bdp:>+12.4f} dB  {better:>16}")
+        print(SEP)
+
+    return results
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Relatório
+# CLI
 # ─────────────────────────────────────────────────────────────────────────────
 
-SEP = "═" * 68
+def parse_args():
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
+    p.add_argument(
+        "--tsv", type=str, default=DEFAULT_TSV,
+        help=f"Caminho para o arquivo TSV de benchmark.\n"
+             f"Padrão: {DEFAULT_TSV}",
+    )
+    p.add_argument(
+        "--mode", type=str, default=None,
+        help="Processar apenas este modo (ex: erp_polar30). "
+             "Padrão: todos os modos não-standard.",
+    )
+    p.add_argument(
+        "--no-csv", action="store_true",
+        help="Não salvar CSVs de saída.",
+    )
+    p.add_argument(
+        "--all-dirs", action="store_true",
+        help="Processar todos os diretórios benchmark_results_* encontrados "
+             "ao lado do script.",
+    )
+    return p.parse_args()
 
-print(f"\n{SEP}")
-print("  Bjontegaard Delta-Rate (BD-Rate)  —  ERP vs Standard")
-print(f"{SEP}")
-print(f"  Referência (baseline) : Standard (ARM retangular)")
-print(f"  Proposto              : ERP (ARM geodésico 360°)")
-print(f"  BD-Rate < 0  →  ERP precisa de MENOS bits (melhor)")
-print(f"  BD-PSNR > 0  →  ERP tem MAIS qualidade    (melhor)")
-print(f"{SEP}\n")
 
-# Por imagem
-print(f"  {'Imagem':<48}  {'BD-Rate':>8}  {'BD-PSNR':>9}")
-print(f"  {'─'*48}  {'─'*8}  {'─'*9}")
-for _, r in per_img.iterrows():
-    sign_r = "✅" if r["bd_rate_%"]  < 0 else "⚠️ "
-    sign_p = "✅" if r["bd_psnr_dB"] > 0 else "⚠️ "
-    print(f"  {r['image']:<48}  "
-          f"{sign_r} {r['bd_rate_%']:+6.2f}%  "
-          f"{sign_p} {r['bd_psnr_dB']:+6.4f} dB")
+def find_all_benchmark_tsvs() -> list[Path]:
+    """Encontra todos os benchmark_all.tsv nos diretórios benchmark_results_*."""
+    root = Path(__file__).parent
+    return sorted(root.glob("benchmark_results*/benchmark_all.tsv"))
 
-print(f"\n  {'─'*48}  {'─'*8}  {'─'*9}")
-mean_bdr = per_img["bd_rate_%"].mean()
-mean_bdp = per_img["bd_psnr_dB"].mean()
-sign_r = "✅" if mean_bdr  < 0 else "⚠️ "
-sign_p = "✅" if mean_bdp  > 0 else "⚠️ "
-print(f"  {'MÉDIA por imagem':<48}  "
-      f"{sign_r} {mean_bdr:+6.2f}%  "
-      f"{sign_p} {mean_bdp:+6.4f} dB")
-print(f"  {'GLOBAL (curva média)':<48}  "
-      f"{'✅' if global_bdr < 0 else '⚠️ '} {global_bdr:+6.2f}%  "
-      f"{'✅' if global_bdp > 0 else '⚠️ '} {global_bdp:+6.4f} dB")
-print(f"\n{SEP}\n")
 
-# Salva CSV
-out_csv = os.path.join(os.path.dirname(TSV_PATH), "bd_rate_results.csv")
-per_img.to_csv(out_csv, index=False, float_format="%.4f")
-print(f"  Resultados por imagem salvos em: {out_csv}\n")
+def main():
+    args = parse_args()
+
+    if args.all_dirs:
+        tsvs = find_all_benchmark_tsvs()
+        if not tsvs:
+            print("  Nenhum diretório benchmark_results_* encontrado.", file=sys.stderr)
+            sys.exit(1)
+        print(f"  Encontrados {len(tsvs)} TSV(s):")
+        for t in tsvs:
+            print(f"    {t}")
+        for tsv in tsvs:
+            process_tsv(str(tsv), filter_mode=args.mode, save_csv=not args.no_csv)
+    else:
+        process_tsv(args.tsv, filter_mode=args.mode, save_csv=not args.no_csv)
+
+
+if __name__ == "__main__":
+    main()

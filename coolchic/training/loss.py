@@ -17,8 +17,10 @@ from torch import Tensor
 from coolchic.io.format.yuv import DictTensorYUV
 from coolchic.training.metrics.mse import dist_to_db, mse_fn
 from coolchic.training.metrics.wasserstein import wasserstein_fn
+from coolchic.training.metrics.ws_psnr import compute_ws_mse, compute_ws_psnr
 
-DISTORTION_METRIC = Literal["mse", "wasserstein"]
+
+DISTORTION_METRIC = Literal["mse", "wasserstein", "ws_mse"]
 
 
 @dataclass(kw_only=True)
@@ -38,6 +40,8 @@ class LossFunctionOutput:
     )
     rate_latent_bpp: Optional[float] = None  # Rate associated to the latent          [bpp]
     total_rate_nn_bpp: float = 0.0  # Total rate associated to the all NNs of all cool-chic [bpp]
+
+    ws_psnr_db: Optional[float] = None
 
     mse_y: Optional[float] = None
     mse_u: Optional[float] = None
@@ -64,7 +68,12 @@ class LossFunctionOutput:
     def __post_init__(self):
         # Compute some dB values from distortion
         if self.detailed_dist is not None:
-            self.detailed_dist_db["psnr_db"] = dist_to_db(self.detailed_dist["mse"])
+            if "mse" in self.detailed_dist:
+                self.detailed_dist_db["psnr_db"] = dist_to_db(self.detailed_dist["mse"])
+            elif "ws_mse" in self.detailed_dist:
+                # When training with ws_mse-only, report WS-MSE converted to dB as psnr_db
+                # so the TSV column is always populated.
+                self.detailed_dist_db["psnr_db"] = dist_to_db(self.detailed_dist["ws_mse"])
             if "wasserstein" in self.detailed_dist:
                 self.detailed_dist_db["wd_db"] = dist_to_db(self.detailed_dist["wasserstein"])
 
@@ -116,6 +125,44 @@ def _compute_mse(x: Union[Tensor, DictTensorYUV], y: Union[Tensor, DictTensorYUV
             total_pixels_yuv += n_pixels_channel
         mse = mse / total_pixels_yuv
         return mse
+
+
+def _compute_ws_mse(
+    decoded_img: Union[Tensor, DictTensorYUV], target_img: Union[Tensor, DictTensorYUV]
+) -> Tensor:
+    """Compute the Weighted-Spherical MSE (WS-MSE) between two images.
+
+    For ERP images, pixels near the poles cover a smaller solid angle and
+    should therefore be down-weighted.  WS-MSE integrates the squared error
+    over the sphere surface instead of counting pixels uniformly.
+
+    Both images can be a single tensor (RGB / YUV444) or a DictTensorYUV
+    (YUV420).  For YUV420, the result is the pixel-count-weighted average
+    of WS-MSE computed per channel.
+
+    Args:
+        decoded_img: Decoded image.
+        target_img: Target (reference) image.
+
+    Returns:
+        Tensor: Scalar WS-MSE (already averaged across channels).
+    """
+    flag_420 = not isinstance(decoded_img, Tensor)
+
+    if not flag_420:
+        # compute_ws_mse returns a per-channel tensor; average to get a scalar.
+        return compute_ws_mse(decoded_img, target_img).mean()
+    else:
+        total_pixels_yuv = 0.0
+        ws_mse = torch.zeros((1), device=decoded_img.get("y").device)
+        for (_, decoded_channel), (_, target_channel) in zip(
+            decoded_img.items(), target_img.items()
+        ):
+            n_pixels_channel = decoded_channel.numel()
+            ws_mse = ws_mse + compute_ws_mse(decoded_channel, target_channel).mean() * n_pixels_channel
+            total_pixels_yuv += n_pixels_channel
+        ws_mse = ws_mse / total_pixels_yuv
+    return ws_mse
 
 
 def _compute_wasserstein(
@@ -224,6 +271,8 @@ def loss_function(
     for dist_name, dist_w in dist_weight.items():
         if dist_name == "mse":
             cur_dist = _compute_mse(decoded_image, target_image)
+        elif dist_name == "ws_mse":
+            cur_dist = _compute_ws_mse(decoded_image, target_image)
         elif dist_name == "wasserstein":
             cur_dist = _compute_wasserstein(decoded_image, target_image)
         else:
@@ -261,6 +310,9 @@ def loss_function(
         }
         total_rate_nn_bpp = total_rate_nn_bit / n_pixels
 
+        ws_psnr_db = compute_ws_psnr(decoded_image, target_image)
+
+
         # Detach all distortions only when computing logs
         for k, v in all_dists.items():
             all_dists[k] = v.detach().item()
@@ -273,6 +325,8 @@ def loss_function(
     output = LossFunctionOutput(
         loss=loss,
         dist=final_dist.detach().item(),
+        ws_psnr_db=ws_psnr_db if compute_logs else None,
+
         rate_bpp=rate_bpp.detach().item(),
         detailed_dist=all_dists if compute_logs else None,
         total_rate_nn_bpp=total_rate_nn_bpp,

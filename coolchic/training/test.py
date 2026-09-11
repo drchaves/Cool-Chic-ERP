@@ -366,6 +366,7 @@ class FrameEncoderLogs(LossFunctionOutput):
             "psnr_y_db": ["all"],
             "psnr_u_db": ["all"],
             "psnr_v_db": ["all"],
+            "ws_psnr_db": ["all", "short"],
             # Uncomment to log the quantization step and exp-golomb param
             # "quantization_param_nn": ["all"],
             # "expgol_count_nn": ["all"],

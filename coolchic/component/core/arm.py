@@ -562,7 +562,7 @@ def _get_non_zero_pixel_ctx_index(n_spatial_ctx: int) -> Tensor:
     return selected_neighbors
 
 
-def get_erp_neighbor(x: Tensor, erp_ctx_index: Tensor) -> Tensor:
+def get_erp_neighbor(x: Tensor, erp_ctx_index: Tensor, erp_ctx_weights: Tensor = None) -> Tensor:
     """Extract spatial context using precomputed ERP geodesic indices.
 
     This is the ERP-aware replacement for :func:`_get_neighbor`.  Instead of
@@ -583,4 +583,57 @@ def get_erp_neighbor(x: Tensor, erp_ctx_index: Tensor) -> Tensor:
         each pixel, ready to be passed directly to the ARM MLP.
     """
     x_flat = x.reshape(-1)                    # [H * W]
-    return x_flat[erp_ctx_index]              # [H * W, dim_arm]
+    res = x_flat[erp_ctx_index]               # [H * W, dim_arm]
+    if erp_ctx_weights is not None:
+        res = res * erp_ctx_weights
+    return res
+
+
+def get_erp_pos_encoded_neighbor(
+    x: Tensor,
+    erp_ctx_index: Tensor,
+    erp_ctx_pos: Tensor,
+) -> Tensor:
+    """Extract spatial context **with positional encoding** for ERP images.
+
+    Extends :func:`get_erp_neighbor` by concatenating a precomputed
+    positional encoding tensor to the extracted context values.  The ARM MLP
+    then receives both *what* each neighbour contains and *where* on the sphere
+    it sits, removing the ambiguity created by reordering neighbours by
+    geodesic distance instead of fixed spatial priority.
+
+    The output has shape ``[H * W, dim_arm * 3]``, interleaved as::
+
+        [v₀, Δlat₀, Δlon₀,  v₁, Δlat₁, Δlon₁,  …]
+
+    where:
+
+    * ``vₖ``     — quantised latent value of the *k*-th context neighbour
+    * ``Δlatₖ``  — normalised latitude displacement (context − pixel) / (π/2)
+    * ``Δlonₖ``  — normalised longitude displacement in [−1, 1]
+
+    Args:
+        x: Latent grid of shape ``[1, 1, H, W]``.
+        erp_ctx_index: Long tensor ``[H * W, dim_arm]`` of flat context indices
+            (same as used by :func:`get_erp_neighbor`).  Must be on the same
+            device as *x*.
+        erp_ctx_pos: Float tensor ``[H * W, dim_arm * 2]`` of positional
+            encodings as returned by
+            :func:`~coolchic.component.core.erp_geometry.build_erp_pos_encoding`.
+            Must be on the same device as *x*.
+
+    Returns:
+        Tensor of shape ``[H * W, dim_arm * 3]`` — context values interleaved
+        with their positional encodings, ready for the ARM MLP.
+    """
+    x_flat = x.reshape(-1)                           # [H * W]
+    ctx_values = x_flat[erp_ctx_index]               # [H * W, dim_arm]
+
+    HW, dim_arm = ctx_values.shape
+    # Reshape pos to [H*W, dim_arm, 2], interleave with values
+    pos = erp_ctx_pos.reshape(HW, dim_arm, 2)        # [H*W, dim_arm, 2]
+    vals = ctx_values.unsqueeze(-1)                  # [H*W, dim_arm, 1]
+
+    # Concatenate along last dim → [H*W, dim_arm, 3] → [H*W, dim_arm * 3]
+    combined = torch.cat([vals, pos], dim=-1)        # [H*W, dim_arm, 3]
+    return combined.reshape(HW, dim_arm * 3)

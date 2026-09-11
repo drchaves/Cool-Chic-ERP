@@ -153,7 +153,7 @@ def encode_decode_coolchic(
         erp_ctx_i = None
         if param.flag_erp_context:
             from coolchic.component.core.erp_geometry import build_erp_context_index
-            erp_ctx_i = build_erp_context_index(
+            erp_ctx_i, erp_ctx_w_i = build_erp_context_index(
                 h_i, w_i,
                 param.spatial_context_arm,
                 param.erp_vertical_radius,

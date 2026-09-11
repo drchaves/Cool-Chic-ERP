@@ -25,6 +25,7 @@ from coolchic.component.core.arm import (
     _laplace_cdf,
     compute_rate,
     get_erp_neighbor,
+    get_erp_pos_encoded_neighbor,
 )
 from coolchic.component.core.noise import CommonGaussianNoiseGenerator
 from coolchic.component.core.quantizer import (
@@ -127,6 +128,11 @@ class CoolChicEncoderParameter:
     # Polar-only mode: ERP context is only used for rows with |lat| > threshold.
     # Set to 0.0 to apply ERP context to all rows (original behaviour).
     erp_polar_threshold_deg: float = 0.0
+    # Positional encoding: when True, each context slot is augmented with
+    # (Δlat_norm, Δlon_norm) so the ARM MLP knows *where* each neighbour
+    # is on the sphere. Requires flag_erp_context = True.
+    # The ARM input size becomes spatial_context_arm * 3 + output_feature_ifce.
+    flag_erp_pos_enc: bool = False
 
     # ==================== Not set by the init function ===================== #
     # Set to true if there is at least one feature of common randomness requested
@@ -201,7 +207,15 @@ class CoolChicEncoderParameter:
                 self.size_per_latent_cr.append(cur_size)
 
     def post_init_arm(self) -> None:
-        self.total_context_arm = self.spatial_context_arm + self.output_feature_ifce
+        # When positional encoding is active, each of the spatial_context_arm
+        # slots is augmented with 2 extra scalars (Δlat, Δlon), tripling the
+        # spatial contribution to the ARM input.
+        spatial_contribution = (
+            self.spatial_context_arm * 3
+            if (self.flag_erp_context and self.flag_erp_pos_enc)
+            else self.spatial_context_arm
+        )
+        self.total_context_arm = spatial_contribution + self.output_feature_ifce
 
     def post_init_common_randomness(self) -> None:
         if self.flag_common_randomness:
@@ -321,23 +335,43 @@ class CoolChicEncoder(nn.Module):
         # Each buffer is a [H_i * W_i, dim_arm] LongTensor stored persistently so
         # that it is saved in checkpoints and moved to the correct device automatically.
         self._erp_ctx_latent_keys: List[str] = []
+        self._erp_ctx_pos_keys: List[str] = []  # positional encoding buffers
         if self.param.flag_erp_context:
-            from coolchic.component.core.erp_geometry import build_erp_context_index
+            from coolchic.component.core.erp_geometry import (
+                build_erp_context_index,
+                build_erp_pos_encoding,
+            )
             for i, (_, _, h_i, w_i) in enumerate(self.param.size_per_latent):
                 key = f"erp_ctx_latent_{i}"
                 self._erp_ctx_latent_keys.append(key)
-                self.register_buffer(
-                    key,
-                    build_erp_context_index(
-                        h_i, w_i,
-                        self.param.spatial_context_arm,
-                        self.param.erp_vertical_radius,
-                        self.param.erp_angular_radius_deg,
-                        self.param.erp_max_horizontal,
-                        self.param.erp_polar_threshold_deg,
-                    ),
-                    persistent=True,
+                ctx_idx, ctx_weights = build_erp_context_index(
+                    h_i, w_i,
+                    self.param.spatial_context_arm,
+                    self.param.erp_vertical_radius,
+                    self.param.erp_angular_radius_deg,
+                    self.param.erp_max_horizontal,
+                    self.param.erp_polar_threshold_deg,
                 )
+                self.register_buffer(key, ctx_idx, persistent=True)
+
+                # Gaussian-normalised neighbour weights [H*W, spatial_ctx] — always
+                # registered so that get_erp_neighbor() can use them for weighted
+                # context aggregation.  getattr() in get_latent_context() looks for
+                # exactly this naming convention.
+                weights_key = f"erp_ctx_weights_{i}"
+                self.register_buffer(weights_key, ctx_weights, persistent=True)
+
+                # Optional positional encoding buffer [H*W, spatial_ctx * 2]
+                if self.param.flag_erp_pos_enc:
+                    pos_key = f"erp_ctx_pos_latent_{i}"
+                    self._erp_ctx_pos_keys.append(pos_key)
+                    self.register_buffer(
+                        pos_key,
+                        build_erp_pos_encoding(h_i, w_i, ctx_idx),
+                        persistent=True,
+                    )
+                else:
+                    self._erp_ctx_pos_keys.append("")
 
         self.arm = instantiate_arm_from_cc_param(self.param)
         self.synthesis = instantiate_syn_from_cc_param(self.param)
@@ -719,9 +753,18 @@ class CoolChicEncoder(nn.Module):
             flat_latent.append(spatial_latent_i.view(-1))
 
             if self.param.flag_erp_context and self._erp_ctx_latent_keys:
-                # ERP path: use precomputed geodesic context indices
                 erp_ctx_idx = getattr(self, self._erp_ctx_latent_keys[idx_latent])
-                cur_context_spatial = get_erp_neighbor(spatial_latent_i, erp_ctx_idx)
+                if self.param.flag_erp_pos_enc and self._erp_ctx_pos_keys[idx_latent]:
+                    # ERP path with positional encoding: [H*W, spatial_ctx * 3]
+                    erp_ctx_pos = getattr(self, self._erp_ctx_pos_keys[idx_latent])
+                    erp_ctx_weights = getattr(self, f"erp_ctx_weights_{idx_latent}", None)
+                    cur_context_spatial = get_erp_pos_encoded_neighbor(
+                        spatial_latent_i, erp_ctx_idx, erp_ctx_pos, erp_ctx_weights
+                    )
+                else:
+                    # ERP path without positional encoding: [H*W, spatial_ctx]
+                    erp_ctx_weights = getattr(self, f"erp_ctx_weights_{idx_latent}", None)
+                    cur_context_spatial = get_erp_neighbor(spatial_latent_i, erp_ctx_idx, erp_ctx_weights)
             else:
                 # Standard path: rectangular causal mask
                 cur_context_spatial = _get_neighbor(

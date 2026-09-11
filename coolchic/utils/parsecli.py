@@ -207,6 +207,9 @@ def get_coolchic_param_from_args(
     coolchic_param["erp_polar_threshold_deg"] = float(
         getattr(args, f"erp_polar_threshold_deg_{coolchic_enc_name}", 0.0)
     )
+    coolchic_param["flag_erp_pos_enc"] = bool(
+        getattr(args, f"erp_pos_enc_{coolchic_enc_name}", False)
+    )
 
     return coolchic_param
 
@@ -352,6 +355,11 @@ def get_preset_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     """
     if args.tune == "mse":
         dist_weight = {"mse": 1.0}
+
+    elif args.tune == "ws_mse":
+        # Weighted-Spherical MSE: corrects for ERP latitude distortion by
+        # weighting each pixel by the solid angle it subtends on the sphere.
+        dist_weight = {"ws_mse": 1.0}
 
     elif args.tune == "wasserstein":
         if args.input.endswith(".yuv"):

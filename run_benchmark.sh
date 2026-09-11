@@ -3,7 +3,7 @@
 #
 # Runs all combinations of:
 #   - Images  : every *.png / *.yuv found in IMAGE_DIR
-#   - Modes   : standard (no --erp_residue) and erp (--erp_residue)
+#   - Modes   : 4 scenarios (standard / erp / ws_mse / ws_mse+erp)
 #   - Lambdas : 6 log-spaced values between 1e-2 and 1e-4
 #
 # Results are aggregated into a single TSV file so that all scenarios
@@ -29,8 +29,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 
-IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images/CTC-360-resized}"
-OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_ctc_poles}"
+IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images/CTC-360-resized/test_gemini}"
+OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_4scenarios}"
 
 FULL="${FULL:-1}"
 
@@ -38,18 +38,26 @@ FULL="${FULL:-1}"
 # Equivalent to: np.logspace(-2, -4, 6)
 LAMBDAS=(
     "0.01"
-    "0.003981"
-    "0.001585"
+    #"0.003981"
+    #"0.001585"
     "0.000631"
-    "0.000251"
+    #"0.000251"
     "0.0001"
 )
 
-# Modes: each entry is "label|extra_flags"
+# ── Scenarios ────────────────────────────────────────────────────────────────
+# Each entry has the format:  "label|extra_flags|erp_ctx|loss_fn"
+#
+#   label    — short identifier written to the TSV
+#   flags    — extra arguments forwarded to cc_encode.py
+#   erp_ctx  — 0 (rectangular mask) or 1 (geodesic ERP context)
+#   loss_fn  — mse or ws_mse
+# ─────────────────────────────────────────────────────────────────────────────
 MODES=(
-    #"standard|"
-    #"erp|--erp_residue"
-    "erp_polar30|--erp_residue --erp_polar_threshold_deg_residue 30.0"
+    "standard||0|mse"
+    "erp|--erp_residue|1|mse"
+    "ws_mse|--tune ws_mse|0|ws_mse"
+    "ws_mse_erp|--erp_residue --tune ws_mse|1|ws_mse"
 )
 
 # ─────────────────────────────────────────────
@@ -62,9 +70,12 @@ mkdir -p "${OUTPUT_DIR}"
 AGG_TSV="${OUTPUT_DIR}/benchmark_all.tsv"
 
 # Write (or overwrite) the header
-printf "%-14s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
-    "image_name" "mode" "lmbda" \
-    "loss" "psnr_db" "rate_bpp" \
+# Columns: image_name, mode (label), erp_ctx (0/1), loss_fn (mse/ws_mse),
+#          lmbda, loss, psnr_db, rate_bpp, ws_psnr_db,
+#          n_pixels, display_order, coding_order
+printf "%-14s\t%-14s\t%-10s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
+    "image_name" "mode" "erp_ctx" "loss_fn" "lmbda" \
+    "loss" "psnr_db" "rate_bpp" "ws_psnr_db" \
     "n_pixels" "display_order" "coding_order" \
     > "${AGG_TSV}"
 
@@ -84,8 +95,9 @@ read_field() {
     local tsv="$1"
     local field="$2"
     awk -v f="${field}" '
-        NR==1 { for(i=1;i<=NF;i++) if($i==f) col=i }
-        NR==2 { print $col }
+        BEGIN { col=0 }
+        NR==1 { for(i=1;i<=NF;i++) if($i==f) {col=i;} }
+        NR==2 { if(col>0) print $col; else print "" }
     ' "${tsv}"
 }
 
@@ -105,7 +117,7 @@ echo "Found ${#IMAGES[@]} image(s):"
 for img in "${IMAGES[@]}"; do echo "  ${img}"; done
 echo ""
 echo "Lambda values: ${LAMBDAS[*]}"
-echo "Modes        : standard, erp"
+echo "Scenarios    : standard | erp | ws_mse | ws_mse_erp"
 echo "Output TSV   : ${AGG_TSV}"
 echo "══════════════════════════════════════════════════════════════════"
 
@@ -120,8 +132,8 @@ for IMAGE in "${IMAGES[@]}"; do
     IMAGE_BASENAME="$(basename "${IMAGE%.*}")"   # strip path and extension
 
     for MODE_ENTRY in "${MODES[@]}"; do
-        MODE_LABEL="${MODE_ENTRY%%|*}"            # "standard" or "erp"
-        MODE_FLAGS="${MODE_ENTRY##*|}"            # "" or "--erp_residue"
+        # Parse the four pipe-separated fields: label|flags|erp_ctx|loss_fn
+        IFS='|' read -r MODE_LABEL MODE_FLAGS MODE_ERP_CTX MODE_LOSS_FN <<< "${MODE_ENTRY}"
 
         for LMBDA in "${LAMBDAS[@]}"; do
             RUN=$(( RUN + 1 ))
@@ -134,13 +146,13 @@ for IMAGE in "${IMAGES[@]}"; do
             echo ""
             echo "──────────────────────────────────────────────────────────────────"
             echo "  Run ${RUN}/${TOTAL}"
-            echo "  Image  : ${IMAGE_BASENAME}"
-            echo "  Mode   : ${MODE_LABEL}"
-            echo "  Lambda : ${LMBDA}"
-            echo "  Workdir: ${WORKDIR}"
+            echo "  Image    : ${IMAGE_BASENAME}"
+            echo "  Scenario : ${MODE_LABEL}   [flags: ${MODE_FLAGS:-<none>}]"
+            echo "  Lambda   : ${LMBDA}"
+            echo "  Workdir  : ${WORKDIR}"
             echo "──────────────────────────────────────────────────────────────────"
 
-            # Run encoder (MODE_FLAGS may be empty — no quotes to avoid passing empty arg)
+            # Run encoder (MODE_FLAGS may contain multiple words — intentionally unquoted)
             # shellcheck disable=SC2086
             "${PYTHON}" "${SCRIPT_DIR}/cc_encode.py" \
                 --input   "${IMAGE}" \
@@ -162,18 +174,22 @@ for IMAGE in "${IMAGES[@]}"; do
             LOSS=$(read_field     "${RESULT_TSV}" "loss")
             PSNR=$(read_field     "${RESULT_TSV}" "psnr_db")
             RATE=$(read_field     "${RESULT_TSV}" "rate_bpp")
+            WS_PSNR=$(read_field  "${RESULT_TSV}" "ws_psnr_db")
             N_PIX=$(read_field    "${RESULT_TSV}" "n_pixels")
             DISP=$(read_field     "${RESULT_TSV}" "display_order")
             COD=$(read_field      "${RESULT_TSV}" "coding_order")
 
             # Append a tab-separated row to the aggregate TSV
-            printf "%-14s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
+            printf "%-14s\t%-14s\t%-10s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
                 "${IMAGE_BASENAME}" \
                 "${MODE_LABEL}" \
+                "${MODE_ERP_CTX}" \
+                "${MODE_LOSS_FN}" \
                 "${LMBDA}" \
                 "${LOSS}" \
                 "${PSNR}" \
                 "${RATE}" \
+                "${WS_PSNR}" \
                 "${N_PIX}" \
                 "${DISP}" \
                 "${COD}" \
@@ -197,3 +213,4 @@ echo "All ${RUN} runs finished. Aggregate results:"
 echo "  ${AGG_TSV}"
 echo ""
 column -t "${AGG_TSV}"
+

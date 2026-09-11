@@ -18,9 +18,9 @@ import numpy as np
 
 # ── configuração ──────────────────────────────────────────────────────────────
 TSV_PATH = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_ctc", "benchmark_all.tsv")
+                        "benchmark_results_ctc_final_final", "benchmark_all.tsv")
 OUT_PATH  = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_ctc", "rd_curve.png")
+                        "benchmark_results_ctc_final_final", "rd_curve.png")
 
 # ── estilo ────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
@@ -47,7 +47,7 @@ LABEL = {"standard": "Standard (rectangular ARM)", "erp": "ERP (geodesic ARM)"}
 # ── leitura ───────────────────────────────────────────────────────────────────
 df = pd.read_csv(TSV_PATH, sep=r"\s+", engine="python")
 df.columns = df.columns.str.strip()
-df["psnr_db"]  = df["psnr_db"].astype(float)
+df["ws_psnr_db"]  = df["ws_psnr_db"].astype(float)
 df["rate_bpp"] = df["rate_bpp"].astype(float)
 df["lmbda"]    = df["lmbda"].astype(float)
 df["mode"]     = df["mode"].str.strip()
@@ -55,7 +55,7 @@ df["mode"]     = df["mode"].str.strip()
 # ── média sobre imagens para cada (modo, lambda) ──────────────────────────────
 avg = (df
        .groupby(["mode", "lmbda"], as_index=False)
-       .agg(psnr_mean=("psnr_db",  "mean"),
+       .agg(psnr_mean=("ws_psnr_db",  "mean"),
             bpp_mean =("rate_bpp", "mean"))
        .sort_values("psnr_mean"))
 
