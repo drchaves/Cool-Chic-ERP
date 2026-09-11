@@ -210,6 +210,9 @@ def get_coolchic_param_from_args(
     coolchic_param["flag_erp_pos_enc"] = bool(
         getattr(args, f"erp_pos_enc_{coolchic_enc_name}", False)
     )
+    coolchic_param["erp_use_gaussian_weights"] = bool(
+        getattr(args, f"erp_gaussian_weights_{coolchic_enc_name}", False)
+    )
 
     return coolchic_param
 

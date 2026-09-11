@@ -151,6 +151,7 @@ def encode_decode_coolchic(
 
         # Build ERP geodesic context index for this latent resolution (if requested)
         erp_ctx_i = None
+        erp_ctx_w_i = None
         if param.flag_erp_context:
             from coolchic.component.core.erp_geometry import build_erp_context_index
             erp_ctx_i, erp_ctx_w_i = build_erp_context_index(
@@ -160,6 +161,10 @@ def encode_decode_coolchic(
                 param.erp_angular_radius_deg,
                 param.erp_max_horizontal,
             )
+            # Only pass weights to the entropy coder when the flag is set.
+            # Must mirror the training forward exactly for lossless coding.
+            if not param.erp_use_gaussian_weights:
+                erp_ctx_w_i = None
 
         latent_i = entropy_coding_latent_arm(
             enc_quantized_latent[idx_latent].to(FIXED_POINT_DTYPE) if mode == "encode" else None,
@@ -173,6 +178,7 @@ def encode_decode_coolchic(
             mode=mode,
             n_spatial_context=param.spatial_context_arm,
             erp_ctx_index=erp_ctx_i,
+            erp_ctx_weights=erp_ctx_w_i,
         )
 
         # Insert at the beginning so that coded_latent[0] is the biggest latent

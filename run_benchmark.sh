@@ -3,8 +3,8 @@
 #
 # Runs all combinations of:
 #   - Images  : every *.png / *.yuv found in IMAGE_DIR
-#   - Modes   : 4 scenarios (standard / erp / ws_mse / ws_mse+erp)
-#   - Lambdas : 6 log-spaced values between 1e-2 and 1e-4
+#   - Modes   : 6 scenarios (standard / erp / erp+gw / ws_mse / ws_mse+erp / ws_mse+erp+gw)
+#   - Lambdas : values defined in LAMBDAS array
 #
 # Results are aggregated into a single TSV file so that all scenarios
 # can later be loaded and compared in one place.
@@ -30,7 +30,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${SCRIPT_DIR}/.venv/bin/python"
 
 IMAGE_DIR="${1:-${SCRIPT_DIR}/samples/images/CTC-360-resized/test_gemini}"
-OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_4scenarios}"
+OUTPUT_DIR="${2:-${SCRIPT_DIR}/benchmark_results_6scenarios}"
 
 FULL="${FULL:-1}"
 
@@ -46,18 +46,21 @@ LAMBDAS=(
 )
 
 # ── Scenarios ────────────────────────────────────────────────────────────────
-# Each entry has the format:  "label|extra_flags|erp_ctx|loss_fn"
+# Each entry has the format:  "label|extra_flags|erp_ctx|loss_fn|gauss_weights"
 #
-#   label    — short identifier written to the TSV
-#   flags    — extra arguments forwarded to cc_encode.py
-#   erp_ctx  — 0 (rectangular mask) or 1 (geodesic ERP context)
-#   loss_fn  — mse or ws_mse
+#   label         — short identifier written to the TSV
+#   flags         — extra arguments forwarded to cc_encode.py
+#   erp_ctx       — 0 (rectangular mask) or 1 (geodesic ERP context)
+#   loss_fn       — mse or ws_mse
+#   gauss_weights — 0 (raw context) or 1 (Gaussian-weighted context)
 # ─────────────────────────────────────────────────────────────────────────────
 MODES=(
-    "standard||0|mse"
-    "erp|--erp_residue|1|mse"
-    "ws_mse|--tune ws_mse|0|ws_mse"
-    "ws_mse_erp|--erp_residue --tune ws_mse|1|ws_mse"
+    #"standard||0|mse|0"
+    #"erp|--erp_residue|1|mse|0"
+    "erp_gw|--erp_residue --erp_gaussian_weights_residue|1|mse|1"
+    #"ws_mse|--tune ws_mse|0|ws_mse|0"
+    "ws_mse_erp|--erp_residue --tune ws_mse|1|ws_mse|0"
+    "ws_mse_erp_gw|--erp_residue --erp_gaussian_weights_residue --tune ws_mse|1|ws_mse|1"
 )
 
 # ─────────────────────────────────────────────
@@ -70,11 +73,11 @@ mkdir -p "${OUTPUT_DIR}"
 AGG_TSV="${OUTPUT_DIR}/benchmark_all.tsv"
 
 # Write (or overwrite) the header
-# Columns: image_name, mode (label), erp_ctx (0/1), loss_fn (mse/ws_mse),
+# Columns: image_name, mode, erp_ctx, loss_fn, gauss_weights,
 #          lmbda, loss, psnr_db, rate_bpp, ws_psnr_db,
 #          n_pixels, display_order, coding_order
-printf "%-14s\t%-14s\t%-10s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
-    "image_name" "mode" "erp_ctx" "loss_fn" "lmbda" \
+printf "%-14s\t%-14s\t%-10s\t%-10s\t%-14s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
+    "image_name" "mode" "erp_ctx" "loss_fn" "gauss_weights" "lmbda" \
     "loss" "psnr_db" "rate_bpp" "ws_psnr_db" \
     "n_pixels" "display_order" "coding_order" \
     > "${AGG_TSV}"
@@ -117,7 +120,7 @@ echo "Found ${#IMAGES[@]} image(s):"
 for img in "${IMAGES[@]}"; do echo "  ${img}"; done
 echo ""
 echo "Lambda values: ${LAMBDAS[*]}"
-echo "Scenarios    : standard | erp | ws_mse | ws_mse_erp"
+echo "Scenarios    : standard | erp | erp_gw | ws_mse | ws_mse_erp | ws_mse_erp_gw"
 echo "Output TSV   : ${AGG_TSV}"
 echo "══════════════════════════════════════════════════════════════════"
 
@@ -132,8 +135,8 @@ for IMAGE in "${IMAGES[@]}"; do
     IMAGE_BASENAME="$(basename "${IMAGE%.*}")"   # strip path and extension
 
     for MODE_ENTRY in "${MODES[@]}"; do
-        # Parse the four pipe-separated fields: label|flags|erp_ctx|loss_fn
-        IFS='|' read -r MODE_LABEL MODE_FLAGS MODE_ERP_CTX MODE_LOSS_FN <<< "${MODE_ENTRY}"
+        # Parse the five pipe-separated fields: label|flags|erp_ctx|loss_fn|gauss_weights
+        IFS='|' read -r MODE_LABEL MODE_FLAGS MODE_ERP_CTX MODE_LOSS_FN MODE_GAUSS_W <<< "${MODE_ENTRY}"
 
         for LMBDA in "${LAMBDAS[@]}"; do
             RUN=$(( RUN + 1 ))
@@ -180,11 +183,12 @@ for IMAGE in "${IMAGES[@]}"; do
             COD=$(read_field      "${RESULT_TSV}" "coding_order")
 
             # Append a tab-separated row to the aggregate TSV
-            printf "%-14s\t%-14s\t%-10s\t%-10s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
+            printf "%-14s\t%-14s\t%-10s\t%-10s\t%-14s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-12s\t%-14s\t%-12s\n" \
                 "${IMAGE_BASENAME}" \
                 "${MODE_LABEL}" \
                 "${MODE_ERP_CTX}" \
                 "${MODE_LOSS_FN}" \
+                "${MODE_GAUSS_W}" \
                 "${LMBDA}" \
                 "${LOSS}" \
                 "${PSNR}" \

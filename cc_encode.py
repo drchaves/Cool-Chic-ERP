@@ -265,6 +265,17 @@ if __name__ == "__main__":
         "(spatial_context_arm × 3 + ifce_features). "
         "Only used when --erp_residue is set.",
     )
+    parser.add(
+        "--erp_gaussian_weights_residue",
+        action="store_true",
+        default=False,
+        help="(ERP) Apply Gaussian-normalised geodesic weights to the context values "
+        "fed to the ARM MLP. Each neighbour's value is multiplied by "
+        "exp(-d²/2σ²)/Σ before the MLP, so closer neighbours have more influence. "
+        "Weights are applied consistently in both the training forward pass and the "
+        "bitstream decoder (using fixed-point arithmetic). "
+        "Only effective when --erp_residue is also set.",
+    )
 
 
     parser.add(

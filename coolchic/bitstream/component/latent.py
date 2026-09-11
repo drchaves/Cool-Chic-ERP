@@ -15,6 +15,12 @@ from coolchic.bitstream.component.rangecoder import RangeCoder
 from coolchic.component.core.arm import _get_mask_size_ctx, _get_non_zero_pixel_ctx_index
 
 
+# Number of fractional bits used to represent the Gaussian weights in fixed-point.
+# 2^16 gives sub-1e-5 relative precision on all weight values in [0, 1].
+# With max latent value AC_MAX_VAL=64: 64 × 2^16 = 4,194,304 — well within int64.
+_ERP_WEIGHT_FP_SHIFT = 16
+
+
 def entropy_coding_latent_arm(
     encoder_data: Optional[Tensor],  # Data is [1, 1, H, W]
     context_inter_features: Optional[Tensor],  # [1, C, H, W]
@@ -27,6 +33,7 @@ def entropy_coding_latent_arm(
     mode: Literal["encode", "decode"],
     n_spatial_context: int,
     erp_ctx_index: Optional[Tensor] = None,
+    erp_ctx_weights: Optional[Tensor] = None,
 ) -> Tensor:
     """Either encode the encoder data into the range_coder internal byte buffer (if mode=="encode")
     or decoder the range coder byte buffer.
@@ -55,6 +62,13 @@ def entropy_coding_latent_arm(
             ``[H * W, n_spatial_context]``, as produced by
             :func:`~coolchic.component.core.erp_geometry.build_erp_context_index`.
             Set to ``None`` (default) to use the standard rectangular mask.
+        erp_ctx_weights (Optional[Tensor]): Gaussian-normalised geodesic weights of shape
+            ``[H * W, n_spatial_context]`` (float32, values in [0, 1], rows sum to 1).
+            When provided alongside ``erp_ctx_index``, each neighbour's integer value is
+            multiplied by the corresponding weight (converted to fixed-point with
+            ``_ERP_WEIGHT_FP_SHIFT`` bits of precision) before being fed to the ARM MLP.
+            Must be ``None`` if ``erp_ctx_index`` is ``None``.
+            **Must match the training forward pass** (same flag value) for lossless coding.
 
     Returns:
         Tensor: The decoded latent of shape [1, 1, H, W]. Should be equal to encoder_data when mode == "encode"
@@ -143,6 +157,7 @@ def entropy_coding_latent_arm(
 
     all_neighbor_idx: Tensor
     erp_ctx_padded: Tensor = None  # type: ignore[assignment]
+    erp_ctx_weights_fp: Optional[Tensor] = None
     if erp_ctx_index is not None:
         # ERP path -------------------------------------------------------
         # Pre-convert erp_ctx_index from unpadded flat indices to padded flat
@@ -151,6 +166,11 @@ def entropy_coding_latent_arm(
         row_up = erp_ctx_index // w                              # [H*W, n_ctx]
         col_up = erp_ctx_index  % w                              # [H*W, n_ctx]
         erp_ctx_padded = (row_up + pad) * padded_width + (col_up + pad)  # [H*W, n_ctx]
+        # Pre-convert float Gaussian weights → fixed-point int64 [H*W, n_ctx]
+        if erp_ctx_weights is not None:
+            erp_ctx_weights_fp = (
+                (erp_ctx_weights * (1 << _ERP_WEIGHT_FP_SHIFT)).round().to(FIXED_POINT_DTYPE)
+            )
         # Dummy all_neighbor_idx; actual lookup happens per-step inside the loop
         all_neighbor_idx = torch.zeros(1, dtype=torch.int64)
     else:
@@ -178,6 +198,13 @@ def entropy_coding_latent_arm(
         context = torch.index_select(data_to_fill, dim=0, index=neighbor_idx).view(
             -1, n_spatial_context
         )
+
+        # Apply Gaussian weights in fixed-point when requested (ERP path only)
+        if erp_ctx_index is not None and erp_ctx_weights_fp is not None:
+            # unpadded_flat: [batch] indices of the current pixels in the unpadded grid
+            # erp_ctx_weights_fp[unpadded_flat]: [batch, n_spatial_context] int64 weights
+            w_fp = erp_ctx_weights_fp[unpadded_flat].view(-1, n_spatial_context)
+            context = (context * w_fp) >> _ERP_WEIGHT_FP_SHIFT
 
         if context_inter_features is not None:
             context = torch.cat((context, context_inter_features[idx, :]), dim=1)

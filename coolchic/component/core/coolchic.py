@@ -133,6 +133,11 @@ class CoolChicEncoderParameter:
     # is on the sphere. Requires flag_erp_context = True.
     # The ARM input size becomes spatial_context_arm * 3 + output_feature_ifce.
     flag_erp_pos_enc: bool = False
+    # Gaussian-weighted context: when True, each neighbour's value is multiplied
+    # by its Gaussian-normalised geodesic weight before being fed to the ARM MLP.
+    # This must be identical in the encoder (training) and the bitstream decoder.
+    # Default False for backward compatibility with existing bitstreams.
+    erp_use_gaussian_weights: bool = False
 
     # ==================== Not set by the init function ===================== #
     # Set to true if there is at least one feature of common randomness requested
@@ -754,17 +759,25 @@ class CoolChicEncoder(nn.Module):
 
             if self.param.flag_erp_context and self._erp_ctx_latent_keys:
                 erp_ctx_idx = getattr(self, self._erp_ctx_latent_keys[idx_latent])
+                # Gaussian weights: only passed when the flag is explicitly enabled.
+                # The decoder must apply the same weighting, so training and bitstream
+                # decoding are always consistent.
+                erp_weights = (
+                    getattr(self, f"erp_ctx_weights_{idx_latent}", None)
+                    if self.param.erp_use_gaussian_weights
+                    else None
+                )
                 if self.param.flag_erp_pos_enc and self._erp_ctx_pos_keys[idx_latent]:
                     # ERP path with positional encoding: [H*W, spatial_ctx * 3]
                     erp_ctx_pos = getattr(self, self._erp_ctx_pos_keys[idx_latent])
-                    erp_ctx_weights = getattr(self, f"erp_ctx_weights_{idx_latent}", None)
                     cur_context_spatial = get_erp_pos_encoded_neighbor(
-                        spatial_latent_i, erp_ctx_idx, erp_ctx_pos, erp_ctx_weights
+                        spatial_latent_i, erp_ctx_idx, erp_ctx_pos, erp_ctx_weights=erp_weights
                     )
                 else:
                     # ERP path without positional encoding: [H*W, spatial_ctx]
-                    erp_ctx_weights = getattr(self, f"erp_ctx_weights_{idx_latent}", None)
-                    cur_context_spatial = get_erp_neighbor(spatial_latent_i, erp_ctx_idx, erp_ctx_weights)
+                    cur_context_spatial = get_erp_neighbor(
+                        spatial_latent_i, erp_ctx_idx, erp_ctx_weights=erp_weights
+                    )
             else:
                 # Standard path: rectangular causal mask
                 cur_context_spatial = _get_neighbor(
