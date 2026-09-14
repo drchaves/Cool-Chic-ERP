@@ -138,6 +138,11 @@ class CoolChicEncoderParameter:
     # This must be identical in the encoder (training) and the bitstream decoder.
     # Default False for backward compatibility with existing bitstreams.
     erp_use_gaussian_weights: bool = False
+    # Sigma scale for the Gaussian weight: sigma = erp_sigma_scale * pi / H.
+    # 1.0 (default) = one inter-row angular step, giving moderate differentiation.
+    # < 1 = sharper (only nearest neighbour matters)
+    # > 1 = softer (more uniform weights)
+    erp_sigma_scale: float = 1.0
 
     # ==================== Not set by the init function ===================== #
     # Set to true if there is at least one feature of common randomness requested
@@ -356,6 +361,7 @@ class CoolChicEncoder(nn.Module):
                     self.param.erp_angular_radius_deg,
                     self.param.erp_max_horizontal,
                     self.param.erp_polar_threshold_deg,
+                    self.param.erp_sigma_scale,
                 )
                 self.register_buffer(key, ctx_idx, persistent=True)
 

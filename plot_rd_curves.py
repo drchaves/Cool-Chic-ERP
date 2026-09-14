@@ -48,11 +48,43 @@ def bd_rate(R1, PSNR1, R2, PSNR2):
     
     return (10 ** avg_diff - 1) * 100
 
+def bd_psnr(R1, PSNR1, R2, PSNR2):
+    """
+    Computes Bjontegaard Delta PSNR (BD-PSNR)
+    R1, PSNR1: reference (baseline)
+    R2, PSNR2: test
+    Positive BD-PSNR means test is better (higher PSNR).
+    """
+    lR1 = np.log10(R1)
+    lR2 = np.log10(R2)
+    
+    # Polynomial degree (max 3, but lower if fewer points)
+    deg1 = min(3, len(PSNR1) - 1)
+    deg2 = min(3, len(PSNR2) - 1)
+    
+    p1 = np.polyfit(lR1, PSNR1, deg1)
+    p2 = np.polyfit(lR2, PSNR2, deg2)
+
+    # Integration interval
+    min_int = max(min(lR1), min(lR2))
+    max_int = min(max(lR1), max(lR2))
+
+    # Calculate integral
+    int1 = np.polyint(p1)
+    int2 = np.polyint(p2)
+    
+    avg_diff = (np.polyval(int2, max_int) - np.polyval(int2, min_int)) - \
+               (np.polyval(int1, max_int) - np.polyval(int1, min_int))
+    
+    avg_diff = avg_diff / (max_int - min_int)
+    
+    return avg_diff
+
 # ── configuração ──────────────────────────────────────────────────────────────
 TSV_PATH = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_4scenarios", "benchmark_all.tsv")
+                        "benchmark_results_all_scenarios_10_imgs_3_lmbdas", "benchmark_all.tsv")
 OUT_PATH  = os.path.join(os.path.dirname(__file__),
-                        "benchmark_results_4scenarios", "rd_curve.png")
+                        "benchmark_results_all_scenarios_10_imgs_3_lmbdas", "rd_curve.png")
 
 # ── estilo ────────────────────────────────────────────────────────────────────
 plt.rcParams.update({
@@ -98,39 +130,79 @@ df["mode"]     = df["mode"].str.strip()
 # ── média sobre imagens para cada (modo, lambda) ──────────────────────────────
 avg = (df
        .groupby(["mode", "lmbda"], as_index=False)
-       .agg(psnr_mean=("ws_psnr_db",  "mean"),
-            bpp_mean =("rate_bpp", "mean"))
-       .sort_values("psnr_mean"))
+       .agg(ws_psnr_mean=("ws_psnr_db", "mean"),
+            psnr_mean=("psnr_db", "mean"),
+            bpp_mean=("rate_bpp", "mean"))
+       .sort_values("ws_psnr_mean"))
 
 # ── BD-Rate Calculation ───────────────────────────────────────────────────────
-print("\n=== BD-Rate Analysis (Baseline: standard) ===")
-standard_baseline = avg[avg["mode"] == "standard"].sort_values("psnr_mean")
-if not standard_baseline.empty and len(standard_baseline) > 2:
-    R1 = standard_baseline["bpp_mean"].values
-    PSNR1 = standard_baseline["psnr_mean"].values
-    for mode in avg["mode"].unique():
-        if mode == "standard":
-            continue
-        test_curve = avg[avg["mode"] == mode].sort_values("psnr_mean")
-        if len(test_curve) > 2:
-            R2 = test_curve["bpp_mean"].values
-            PSNR2 = test_curve["psnr_mean"].values
-            try:
-                bd = bd_rate(R1, PSNR1, R2, PSNR2)
-                print(f"BD-Rate vs {mode:15s}: {bd:6.2f}%")
-            except Exception as e:
-                print(f"BD-Rate vs {mode:15s}: N/A (Error: {e})")
-        else:
-            print(f"BD-Rate vs {mode:15s}: N/A (Not enough points)")
-print("=============================================\n")
+bd_rate_path = os.path.join(os.path.dirname(TSV_PATH), "bd_rate.txt")
+bd_psnr_path = os.path.join(os.path.dirname(TSV_PATH), "bd_psnr.txt")
+bd_rate_lines = []
+bd_psnr_lines = []
+
+def compute_bd_metrics(metric_col, title):
+    bd_rate_lines.append(f"=== BD-Rate Analysis ({title} | Baseline: standard) ===")
+    bd_psnr_lines.append(f"=== BD-PSNR Analysis ({title} | Baseline: standard) ===")
+    print("\n" + bd_rate_lines[-1])
+    print(bd_psnr_lines[-1])
+    
+    standard_baseline = avg[avg["mode"] == "standard"].sort_values(metric_col)
+    if not standard_baseline.empty and len(standard_baseline) > 2:
+        R1 = standard_baseline["bpp_mean"].values
+        PSNR1 = standard_baseline[metric_col].values
+        for mode in avg["mode"].unique():
+            if mode == "standard":
+                continue
+            test_curve = avg[avg["mode"] == mode].sort_values(metric_col)
+            if len(test_curve) > 2:
+                R2 = test_curve["bpp_mean"].values
+                PSNR2 = test_curve[metric_col].values
+                
+                # Rate
+                try:
+                    bd_r = bd_rate(R1, PSNR1, R2, PSNR2)
+                    line_r = f"BD-Rate vs {mode:15s}: {bd_r:7.2f}%"
+                except Exception as e:
+                    line_r = f"BD-Rate vs {mode:15s}: N/A (Error: {e})"
+                
+                # PSNR
+                try:
+                    bd_p = bd_psnr(R1, PSNR1, R2, PSNR2)
+                    line_p = f"BD-PSNR vs {mode:15s}: {bd_p:7.3f} dB"
+                except Exception as e:
+                    line_p = f"BD-PSNR vs {mode:15s}: N/A (Error: {e})"
+            else:
+                line_r = f"BD-Rate vs {mode:15s}: N/A (Not enough points)"
+                line_p = f"BD-PSNR vs {mode:15s}: N/A (Not enough points)"
+                
+            print(line_r)
+            print(line_p)
+            bd_rate_lines.append(line_r)
+            bd_psnr_lines.append(line_p)
+            
+    footer = "============================================="
+    print(footer + "\n")
+    bd_rate_lines.append(footer)
+    bd_psnr_lines.append(footer)
+
+compute_bd_metrics("ws_psnr_mean", "WS-PSNR")
+compute_bd_metrics("psnr_mean", "Standard PSNR")
+
+with open(bd_rate_path, "w") as f:
+    f.write("\n".join(bd_rate_lines) + "\n")
+with open(bd_psnr_path, "w") as f:
+    f.write("\n".join(bd_psnr_lines) + "\n")
+print(f"BD-Rates salvos em: {bd_rate_path}")
+print(f"BD-PSNRs salvos em: {bd_psnr_path}")
 
 # ── plot ───────────────────────────────────────────────────────────────────────
 fig, ax = plt.subplots(figsize=(10, 6.5))
 
 for mode, grp in avg.groupby("mode"):
-    grp = grp.sort_values("psnr_mean")
+    grp = grp.sort_values("ws_psnr_mean")
     s = PALETTE[mode]
-    ax.plot(grp["psnr_mean"], grp["bpp_mean"],
+    ax.plot(grp["ws_psnr_mean"], grp["bpp_mean"],
             color=s["color"], marker=s["marker"], ls=s["ls"], lw=s["lw"],
             markersize=8, markeredgewidth=1.4, markeredgecolor="#0f1117",
             label=LABEL[mode], zorder=3)
@@ -143,8 +215,8 @@ for mode, grp in avg.groupby("mode"):
         if "erp" in mode:
             offset_y = -0.022
         ax.annotate(lbl,
-                    xy=(row["psnr_mean"], row["bpp_mean"]),
-                    xytext=(row["psnr_mean"] + offset_x, row["bpp_mean"] + offset_y),
+                    xy=(row["ws_psnr_mean"], row["bpp_mean"]),
+                    xytext=(row["ws_psnr_mean"] + offset_x, row["bpp_mean"] + offset_y),
                     fontsize=7.5, color=s["color"], alpha=0.85,
                     arrowprops=None)
 

@@ -261,6 +261,8 @@ class CoolChicHeader(AbstractHeader):
             HeaderElement(name="erp_angular_radius_deg_x10", n_bits=7),   # max 127 -> 12.7 deg
             HeaderElement(name="erp_max_horizontal", n_bits=6),            # max 63 pixels
             HeaderElement(name="erp_use_gaussian_weights", n_bits=1),      # 0/1 flag
+            # sigma_scale stored as round(value * 100) → precision 0.01, range 0.01–2.55
+            HeaderElement(name="erp_sigma_scale_x100", n_bits=8),
             # ---- Latent grid and hyperlatent grids
             HeaderElementList(name="img_size", n_bits_per_val=14, n_val=2),
             HeaderElementList(name="latent_resolution", n_bits_per_val=4, n_val=2),
@@ -339,6 +341,7 @@ class CoolChicHeader(AbstractHeader):
         )
         self.set_value("erp_max_horizontal", cc_enc_param.erp_max_horizontal)
         self.set_value("erp_use_gaussian_weights", int(cc_enc_param.erp_use_gaussian_weights))
+        self.set_value("erp_sigma_scale_x100", int(round(cc_enc_param.erp_sigma_scale * 100)))
         self.set_value("img_size", cc_enc_param.img_size)
         self.set_value("latent_resolution", cc_enc_param.latent_resolution)
         self.set_value("n_latent_grids", cc_enc_param.n_latent_grids)
@@ -393,5 +396,6 @@ class CoolChicHeader(AbstractHeader):
             erp_angular_radius_deg=self.get_value("erp_angular_radius_deg_x10") / 10.0,
             erp_max_horizontal=self.get_value("erp_max_horizontal"),
             erp_use_gaussian_weights=bool(self.get_value("erp_use_gaussian_weights")),
+            erp_sigma_scale=self.get_value("erp_sigma_scale_x100") / 100.0,
         )
         return param

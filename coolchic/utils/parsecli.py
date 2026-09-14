@@ -213,6 +213,9 @@ def get_coolchic_param_from_args(
     coolchic_param["erp_use_gaussian_weights"] = bool(
         getattr(args, f"erp_gaussian_weights_{coolchic_enc_name}", False)
     )
+    coolchic_param["erp_sigma_scale"] = float(
+        getattr(args, f"erp_sigma_scale_{coolchic_enc_name}", 1.0)
+    )
 
     return coolchic_param
 

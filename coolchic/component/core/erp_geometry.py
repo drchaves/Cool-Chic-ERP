@@ -224,6 +224,7 @@ def build_erp_context_index(
     angular_radius_deg: float = 10.0,
     max_horizontal: int = 40,
     polar_threshold_deg: float = 0.0,
+    sigma_scale: float = 1.0,
 ) -> Tuple[Tensor, Tensor]:
     """Build the ERP context-index tensor for a latent grid of size H x W.
 
@@ -254,6 +255,11 @@ def build_erp_context_index(
             standard rectangular context is used instead of the geodesic one.
             Set to 0 (default) to always use the geodesic context (original
             behaviour).
+        sigma_scale: Multiplier on the geometry-derived Gaussian sigma.
+            The base sigma is ``π / max(H, W)`` (the angular step of one pixel).
+            ``sigma_scale = 1.0`` (default) gives good differentiation between
+            immediate neighbours and farther ones.  Larger values make weights
+            more uniform; smaller values make only the nearest neighbour matter.
 
     Returns:
         Tuple containing:
@@ -267,6 +273,16 @@ def build_erp_context_index(
     sin_phi = np.sin(phi)
     cos_phi = np.cos(phi)
     polar_threshold_rad = np.deg2rad(polar_threshold_deg)
+
+    # Gaussian sigma derived from the angular pixel step of the latent grid.
+    # pi / H is the angular step between adjacent rows (latitude step), which
+    # equals the geodesic distance to the nearest vertical neighbour at the
+    # equator.  For ERP images (W ≈ 2H) the longitude step 2π/W ≈ π/H matches,
+    # so this choice is isotropic.  sigma_scale lets the caller tune sharpness:
+    #   sigma_scale < 1  → sharper (only nearest neighbour matters)
+    #   sigma_scale = 1  → moderate differentiation (recommended default)
+    #   sigma_scale > 1  → softer (weights become more uniform)
+    sigma = sigma_scale * (np.pi / H)
 
     for row in range(H):
         # ── Polar-only mode: fall back to rectangular for equatorial rows ──
@@ -332,7 +348,6 @@ def build_erp_context_index(
             n_valid = len(valid_distances)
             if n_valid > 0:
                 d = np.array(valid_distances)
-                sigma = 1.0
                 w = np.exp(-(d**2) / (2 * sigma**2))
                 if np.sum(w) > 0:
                     w = w / np.sum(w)

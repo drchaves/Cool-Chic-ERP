@@ -276,6 +276,17 @@ if __name__ == "__main__":
         "bitstream decoder (using fixed-point arithmetic). "
         "Only effective when --erp_residue is also set.",
     )
+    parser.add(
+        "--erp_sigma_scale_residue",
+        type=float,
+        default=1.0,
+        help="(ERP) Scale factor for the Gaussian sigma used in geodesic weighting. "
+        "sigma = erp_sigma_scale * pi / H, where H is the latent grid height. "
+        "1.0 (default) = one angular pixel step, giving moderate differentiation. "
+        "< 1 = sharper weights (only nearest neighbour matters). "
+        "> 1 = softer weights (more uniform). "
+        "Only effective when --erp_gaussian_weights_residue is also set.",
+    )
 
 
     parser.add(

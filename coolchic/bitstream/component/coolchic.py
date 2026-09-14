@@ -160,6 +160,7 @@ def encode_decode_coolchic(
                 param.erp_vertical_radius,
                 param.erp_angular_radius_deg,
                 param.erp_max_horizontal,
+                sigma_scale=getattr(param, "erp_sigma_scale", 1.0),
             )
             # Only pass weights to the entropy coder when the flag is set.
             # Must mirror the training forward exactly for lossless coding.
